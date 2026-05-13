@@ -6,11 +6,12 @@ import {
   Users,
   Stethoscope,
   FlaskConical,
+  FolderTree,
   Building2,
   ScrollText,
   FileText,
+  FileDown,
   CreditCard,
-  MessageSquare,
   Mail,
   MapPin,
   BarChart3,
@@ -25,6 +26,11 @@ import { cn } from '../lib/utils';
 import { useAuthStore } from '../stores/authStore';
 import { Logo } from '../components/shared/Logo';
 
+// Feedback is intentionally hidden from the sidebar. The page and route
+// still exist (see App.tsx) — visit /admin/feedback directly to reach it.
+// Re-add an item below if/when patient review moderation becomes part of
+// the day-to-day admin workflow:
+//   { to: '/admin/feedback', label: 'Feedback', icon: MessageSquare },
 const navGroups = [
   {
     label: 'Overview',
@@ -46,17 +52,18 @@ const navGroups = [
     label: 'Catalog',
     items: [
       { to: '/admin/doctors', label: 'Doctors', icon: Stethoscope },
+      { to: '/admin/departments', label: 'Add doctor department', icon: Building2 },
       { to: '/admin/services', label: 'Services', icon: FlaskConical },
-      { to: '/admin/departments', label: 'Departments', icon: Building2 },
+      { to: '/admin/service-categories', label: 'add test catagory for service', icon: FolderTree },
       { to: '/admin/pincodes', label: 'Pincodes', icon: MapPin },
     ],
   },
   {
     label: 'Records',
     items: [
+      { to: '/admin/invoices', label: 'Invoices', icon: FileDown },
       { to: '/admin/reports', label: 'Reports', icon: FileText },
       { to: '/admin/payments', label: 'Payments', icon: CreditCard },
-      { to: '/admin/feedback', label: 'Feedback', icon: MessageSquare },
       { to: '/admin/enquiries', label: 'Enquiries', icon: Mail },
       { to: '/admin/audit-log', label: 'Audit Log', icon: ScrollText },
     ],

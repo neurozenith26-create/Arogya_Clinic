@@ -11,6 +11,7 @@ import publicRoutes from './modules/public/publicRoutes.js';
 import authRoutes from './modules/auth/authRoutes.js';
 import phase2Routes from './modules/phase2/phase2Routes.js';
 import uploadRoutes from './modules/uploads/uploadRoutes.js';
+import invoiceRoutes from './modules/invoices/invoiceRoutes.js';
 
 const app: Express = express();
 
@@ -49,6 +50,8 @@ app.use('/api/v1', publicRoutes);
 app.use('/api/v1', phase2Routes);
 // File uploads + downloads
 app.use('/api/v1', uploadRoutes);
+// Invoice PDF generation
+app.use('/api/v1', invoiceRoutes);
 
 // 404 + error handling (must be last)
 app.use(notFoundHandler);

@@ -1,35 +1,53 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Upload, FileText, AlertCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  Download,
+  FileDown,
+  FileText,
+  Wallet,
+} from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
-import { getBookingById, updateBooking } from '../../lib/mockPhase2';
-import { formatCurrencyINR } from '../../lib/utils';
-
-const statusOptions = [
-  'draft',
-  'pending_payment',
-  'confirmed',
-  'in_progress',
-  'completed',
-  'cancelled',
-  'no_show',
-] as const;
-
-const collectionOptions = [
-  'not_required',
-  'not_assigned',
-  'assigned',
-  'en_route',
-  'collected',
-  'received_at_lab',
-] as const;
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
+import { Skeleton } from '../../components/ui/skeleton';
+import {
+  BOOKING_STATUS_DESCRIPTIONS,
+  downloadInvoicePdf,
+  downloadReport,
+  useAdminBooking,
+  useRecordPayment,
+  type EditableBookingStatus,
+} from '../../hooks/queries';
+import { BookingStatusSelect } from '../../components/admin/BookingStatusSelect';
+import { formatCurrencyINR, cn } from '../../lib/utils';
+import { getApiErrorMessage } from '../../lib/apiClient';
 
 export default function AdminBookingDetailPage() {
   const { id } = useParams();
-  const [, force] = useState(0);
-  const booking = getBookingById(Number(id));
+  const { data: booking, isLoading } = useAdminBooking(id);
+  const paymentMutation = useRecordPayment(id ?? '');
+
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<
+    'cash' | 'upi_qr_offline' | 'card_swipe' | 'cheque'
+  >('cash');
+  const [paymentAmount, setPaymentAmount] = useState<string>('');
+  const [paymentNotes, setPaymentNotes] = useState<string>('');
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-32" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
 
   if (!booking) {
     return (
@@ -43,26 +61,42 @@ export default function AdminBookingDetailPage() {
     );
   }
 
-  const handleStatusChange = (status: (typeof statusOptions)[number]) => {
-    updateBooking(booking.id, { booking_status: status });
-    force((x) => x + 1);
+  const handleDownloadInvoice = async () => {
+    if (!booking) return;
+    setDownloadError(null);
+    setDownloading(true);
+    try {
+      await downloadInvoicePdf(booking.id, booking.booking_code);
+    } catch (err) {
+      setDownloadError(getApiErrorMessage(err, 'Could not download invoice'));
+    } finally {
+      setDownloading(false);
+    }
   };
 
-  const handleCollectionChange = (status: (typeof collectionOptions)[number]) => {
-    updateBooking(booking.id, { collection_status: status });
-    force((x) => x + 1);
+  const handleRecordPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amt = Number(paymentAmount);
+    if (!Number.isFinite(amt) || amt <= 0) return;
+    await paymentMutation.mutateAsync({
+      method: paymentMethod,
+      amount: amt,
+      notes: paymentNotes || undefined,
+      payment_type: 'balance',
+    });
+    setShowPaymentForm(false);
+    setPaymentAmount('');
+    setPaymentNotes('');
   };
 
-  const handleUploadReport = () => {
-    const next = {
-      id: (booking.reports?.length ?? 0) + 1,
-      file_name: `Report_${booking.booking_code}_v${(booking.reports?.length ?? 0) + 1}.pdf`,
-      uploaded_at: new Date().toISOString(),
-      report_type: 'lab_report',
-    };
-    updateBooking(booking.id, { reports: [...(booking.reports ?? []), next] });
-    force((x) => x + 1);
-  };
+  const snap = booking.patient_snapshot ?? {};
+  const patientLine = [
+    snap.mobile,
+    // Show email only if present; no lonely em-dash
+    snap.email,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <div className="space-y-4">
@@ -76,37 +110,47 @@ export default function AdminBookingDetailPage() {
         <div className="space-y-4 lg:col-span-2">
           <Card>
             <CardHeader>
-              <div className="flex items-start justify-between">
+              <div className="flex items-start justify-between gap-2">
                 <div>
                   <CardTitle className="font-mono text-base">{booking.booking_code}</CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {booking.booking_type === 'doctor_appointment' ? 'Doctor Appointment' : 'Test Booking'} ·{' '}
+                    {booking.booking_type === 'doctor_appointment'
+                      ? 'Doctor Appointment'
+                      : 'Test Booking'}{' '}
+                    ·{' '}
                     {booking.visit_type === 'home_visit' ? 'Home Collection' : 'In-Clinic'} ·{' '}
                     {booking.booking_origin === 'walk_in' ? 'Walk-in' : 'Online'}
                   </p>
                 </div>
-                <Badge>{booking.booking_status.replace('_', ' ')}</Badge>
+                <BookingStatusSelect
+                  bookingId={booking.id}
+                  value={booking.booking_status}
+                  variant="compact"
+                />
+
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
                 <div className="text-xs font-medium uppercase text-muted-foreground">Patient</div>
                 <div className="mt-1 font-medium">
-                  {booking.patient_snapshot.first_name} {booking.patient_snapshot.last_name}
+                  {[snap.first_name, snap.last_name].filter(Boolean).join(' ') || '—'}
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  {booking.patient_snapshot.mobile} · {booking.patient_snapshot.email ?? '—'}
-                </div>
+                {patientLine && (
+                  <div className="text-sm text-muted-foreground">{patientLine}</div>
+                )}
               </div>
 
               <div>
                 <div className="text-xs font-medium uppercase text-muted-foreground">Schedule</div>
                 <div className="mt-1 text-sm">
-                  {booking.scheduled_date} at {booking.scheduled_start_time}
+                  {booking.scheduled_date ?? '—'}
+                  {booking.scheduled_start_time && ` at ${booking.scheduled_start_time.slice(0, 5)}`}
                 </div>
                 {booking.doctor_name && (
                   <div className="text-sm text-muted-foreground">
-                    {booking.doctor_name} · {booking.doctor_speciality}
+                    {booking.doctor_name}
+                    {booking.doctor_speciality && ` · ${booking.doctor_speciality}`}
                   </div>
                 )}
               </div>
@@ -115,9 +159,14 @@ export default function AdminBookingDetailPage() {
                 <div>
                   <div className="text-xs font-medium uppercase text-muted-foreground">Address</div>
                   <div className="mt-1 text-sm">
-                    {booking.delivery_address.line1}, {booking.delivery_address.line2}
-                    {', '}
-                    {booking.delivery_address.city} — {booking.delivery_address.pincode}
+                    {[
+                      booking.delivery_address.line1,
+                      booking.delivery_address.line2,
+                      booking.delivery_address.city,
+                      booking.delivery_address.pincode,
+                    ]
+                      .filter(Boolean)
+                      .join(', ')}
                   </div>
                 </div>
               )}
@@ -125,70 +174,185 @@ export default function AdminBookingDetailPage() {
               <div>
                 <div className="text-xs font-medium uppercase text-muted-foreground">Items</div>
                 <ul className="mt-2 space-y-1.5 text-sm">
-                  {booking.items.map((item, i) => (
-                    <li key={i} className="flex justify-between border-b py-1.5 last:border-0">
-                      <span>
-                        {item.item_name} × {item.quantity}
-                      </span>
-                      <span className="font-medium">
-                        {formatCurrencyINR(item.unit_price * item.quantity)}
-                      </span>
-                    </li>
-                  ))}
+                  {booking.items.length === 0 ? (
+                    <li className="text-muted-foreground">No items</li>
+                  ) : (
+                    booking.items.map((item) => (
+                      <li key={item.id} className="flex justify-between border-b py-1.5 last:border-0">
+                        <span>
+                          {item.item_name} × {item.quantity}
+                        </span>
+                        <span className="font-medium">
+                          {formatCurrencyINR(Number(item.total_price))}
+                        </span>
+                      </li>
+                    ))
+                  )}
                 </ul>
               </div>
 
               <div className="rounded-md border p-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Subtotal</span>
-                  <span>{formatCurrencyINR(booking.subtotal_amount)}</span>
-                </div>
-                {booking.home_visit_charge > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Home visit charge</span>
-                    <span>{formatCurrencyINR(booking.home_visit_charge)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between border-t pt-2 font-semibold">
+                <div className="flex justify-between font-semibold">
                   <span>Total</span>
-                  <span>{formatCurrencyINR(booking.total_amount)}</span>
+                  <span>{formatCurrencyINR(Number(booking.total_amount))}</span>
                 </div>
                 <div className="flex justify-between text-green-700">
                   <span>Paid</span>
-                  <span>{formatCurrencyINR(booking.advance_amount)}</span>
+                  <span>{formatCurrencyINR(Number(booking.advance_amount))}</span>
                 </div>
                 <div className="flex justify-between text-muted-foreground">
                   <span>Balance</span>
-                  <span>{formatCurrencyINR(booking.balance_amount)}</span>
+                  <span>{formatCurrencyINR(Number(booking.balance_amount))}</span>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-base">Reports</CardTitle>
-              <Button size="sm" onClick={handleUploadReport}>
-                <Upload className="mr-1 h-3.5 w-3.5" /> Upload report
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {(booking.reports?.length ?? 0) === 0 ? (
-                <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  No reports uploaded yet.
-                </p>
-              ) : (
+          {/* ── Reports (display only — uploads happen from /admin/reports) ── */}
+          {booking.reports.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Reports</CardTitle>
+              </CardHeader>
+              <CardContent>
                 <ul className="space-y-2">
-                  {booking.reports!.map((r) => (
+                  {booking.reports.map((r) => (
                     <li
                       key={r.id}
                       className="flex items-center justify-between rounded-md border p-3 text-sm"
                     >
                       <span className="inline-flex items-center gap-2">
                         <FileText className="h-4 w-4 text-primary" />
-                        {r.file_name}
+                        <div>
+                          <div className="font-medium">{r.file_name}</div>
+                          <div className="text-xs text-muted-foreground">
+                            v{r.version} · {new Date(r.uploaded_at).toLocaleString()}
+                          </div>
+                        </div>
                       </span>
-                      <Badge variant="outline">v{r.id}</Badge>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          downloadReport(r.id).catch((err) => alert((err as Error).message))
+                        }
+                      >
+                        <Download className="mr-1 h-3.5 w-3.5" /> Download
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ── Payment ledger ────────────────────────────────────────── */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-base">Payments</CardTitle>
+              {booking.balance_amount > 0 && (
+                <Button size="sm" onClick={() => setShowPaymentForm((v) => !v)}>
+                  <Wallet className="mr-1 h-3.5 w-3.5" /> Record payment
+                </Button>
+              )}
+            </CardHeader>
+            <CardContent>
+              {showPaymentForm && (
+                <form
+                  onSubmit={handleRecordPayment}
+                  className="mb-4 grid gap-3 rounded-md border bg-muted/30 p-3 sm:grid-cols-2"
+                >
+                  <div>
+                    <Label>Method</Label>
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value as never)}
+                      className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    >
+                      <option value="cash">Cash</option>
+                      <option value="upi_qr_offline">UPI QR</option>
+                      <option value="card_swipe">Card swipe</option>
+                      <option value="cheque">Cheque</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label>Amount</Label>
+                    <Input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      max={booking.balance_amount}
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      placeholder={`up to ${formatCurrencyINR(Number(booking.balance_amount))}`}
+                      className="mt-1.5"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label>Notes (optional)</Label>
+                    <Input
+                      value={paymentNotes}
+                      onChange={(e) => setPaymentNotes(e.target.value)}
+                      placeholder="Cheque #, reference, etc."
+                      className="mt-1.5"
+                    />
+                  </div>
+                  {paymentMutation.error && (
+                    <div className="sm:col-span-2 rounded-md border border-destructive bg-destructive/10 p-2 text-xs text-destructive">
+                      {(paymentMutation.error as Error).message}
+                    </div>
+                  )}
+                  <div className="flex gap-2 sm:col-span-2">
+                    <Button type="submit" disabled={paymentMutation.isPending}>
+                      {paymentMutation.isPending ? 'Recording…' : 'Save payment'}
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={() => setShowPaymentForm(false)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {booking.payments.length === 0 ? (
+                <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  No payments recorded yet.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {booking.payments.map((p) => (
+                    <li
+                      key={p.id}
+                      className={cn(
+                        'flex items-center justify-between rounded-md border p-3 text-sm',
+                        p.payment_status === 'refunded' && 'bg-muted/30',
+                      )}
+                    >
+                      <div>
+                        <div className="font-medium">
+                          {formatCurrencyINR(Number(p.amount))}
+                          {Number(p.refunded_amount) > 0 && (
+                            <span className="ml-2 text-xs text-destructive">
+                              ({formatCurrencyINR(Number(p.refunded_amount))} refunded)
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {p.payment_source === 'razorpay' ? 'Razorpay' : 'Offline'} ·{' '}
+                          {p.payment_method ?? 'unknown'} · {p.payment_type}
+                        </div>
+                        {p.notes && <div className="text-xs text-muted-foreground">{p.notes}</div>}
+                      </div>
+                      <Badge
+                        variant={
+                          p.payment_status === 'captured'
+                            ? 'success'
+                            : p.payment_status === 'refunded'
+                              ? 'destructive'
+                              : 'secondary'
+                        }
+                      >
+                        {p.payment_status}
+                      </Badge>
                     </li>
                   ))}
                 </ul>
@@ -197,44 +361,51 @@ export default function AdminBookingDetailPage() {
           </Card>
         </div>
 
+        {/* ── Sidebar (admin actions) ─────────────────────────────────── */}
         <div className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Manage status</CardTitle>
+              <CardTitle className="text-base">Invoice</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">Booking status</label>
-                <select
-                  value={booking.booking_status}
-                  onChange={(e) => handleStatusChange(e.target.value as never)}
-                  className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  {statusOptions.map((s) => (
-                    <option key={s} value={s}>
-                      {s.replace('_', ' ')}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {booking.visit_type === 'home_visit' && (
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">
-                    Collection status
-                  </label>
-                  <select
-                    value={booking.collection_status}
-                    onChange={(e) => handleCollectionChange(e.target.value as never)}
-                    className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  >
-                    {collectionOptions.map((s) => (
-                      <option key={s} value={s}>
-                        {s.replace(/_/g, ' ')}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <p className="text-xs text-muted-foreground">
+                Download the auto-generated tax invoice as a printable PDF.
+              </p>
+              <Button onClick={handleDownloadInvoice} disabled={downloading} className="w-full">
+                <FileDown className="mr-2 h-4 w-4" />
+                {downloading ? 'Generating…' : 'Download Invoice'}
+              </Button>
+              {downloadError && (
+                <p className="rounded-md border border-destructive bg-destructive/10 p-2 text-xs text-destructive">
+                  {downloadError}
+                </p>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Booking status</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <BookingStatusSelect
+                bookingId={booking.id}
+                value={booking.booking_status}
+                variant="default"
+                className="block w-full"
+              />
+              {BOOKING_STATUS_DESCRIPTIONS[booking.booking_status as EditableBookingStatus] && (
+                <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  {BOOKING_STATUS_DESCRIPTIONS[booking.booking_status as EditableBookingStatus]}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Changes are saved immediately and the patient will see the new status on
+                their dashboard.
+              </p>
+              <div className="text-xs text-muted-foreground">
+                Payment: {booking.payment_status} · Collection: {booking.collection_status}
+              </div>
             </CardContent>
           </Card>
         </div>

@@ -43,6 +43,9 @@ const AdminBookingDetailPage = lazy(() => import('./pages/admin/AdminBookingDeta
 const AdminDoctorsPage = lazy(() => import('./pages/admin/AdminDoctorsPage'));
 const AdminDoctorEditPage = lazy(() => import('./pages/admin/AdminDoctorEditPage'));
 const AdminServicesPage = lazy(() => import('./pages/admin/AdminServicesPage'));
+const AdminServiceCategoriesPage = lazy(
+  () => import('./pages/admin/AdminServiceCategoriesPage'),
+);
 const AdminDepartmentsPage = lazy(() => import('./pages/admin/AdminDepartmentsPage'));
 const AdminPatientsPage = lazy(() => import('./pages/admin/AdminPatientsPage'));
 const AdminPaymentsPage = lazy(() => import('./pages/admin/AdminPaymentsPage'));
@@ -52,6 +55,7 @@ const AdminAuditLogPage = lazy(() => import('./pages/admin/AdminAuditLogPage'));
 const AdminSettingsPage = lazy(() => import('./pages/admin/AdminSettingsPage'));
 const AdminAnalyticsPage = lazy(() => import('./pages/admin/AdminAnalyticsPage'));
 const AdminReportsPage = lazy(() => import('./pages/admin/AdminReportsPage'));
+const AdminInvoicesPage = lazy(() => import('./pages/admin/AdminInvoicesPage'));
 const AdminPincodesPage = lazy(() => import('./pages/admin/AdminPincodesPage'));
 const WalkInBillPage = lazy(() => import('./pages/admin/WalkInBillPage'));
 const HomeCollectionBoardPage = lazy(() => import('./pages/admin/HomeCollectionBoardPage'));
@@ -155,9 +159,14 @@ export default function App() {
               <Route path="/admin/doctors" element={<AdminDoctorsPage />} />
               <Route path="/admin/doctors/:id" element={<AdminDoctorEditPage />} />
               <Route path="/admin/services" element={<AdminServicesPage />} />
+              <Route
+                path="/admin/service-categories"
+                element={<AdminServiceCategoriesPage />}
+              />
               <Route path="/admin/departments" element={<AdminDepartmentsPage />} />
               <Route path="/admin/pincodes" element={<AdminPincodesPage />} />
               <Route path="/admin/reports" element={<AdminReportsPage />} />
+              <Route path="/admin/invoices" element={<AdminInvoicesPage />} />
               <Route path="/admin/payments" element={<AdminPaymentsPage />} />
               <Route path="/admin/feedback" element={<AdminFeedbackPage />} />
               <Route path="/admin/enquiries" element={<AdminEnquiriesPage />} />

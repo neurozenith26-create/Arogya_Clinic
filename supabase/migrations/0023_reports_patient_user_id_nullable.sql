@@ -1,0 +1,21 @@
+-- 0023_reports_patient_user_id_nullable.sql
+--
+-- Walk-in patients legitimately have no users row (admin entered them via
+-- patient_snapshot JSONB on the booking, no auth account exists). The
+-- original reports.patient_user_id NOT NULL constraint blocked uploading
+-- reports against those walk-in bookings.
+--
+-- The column is redundant for linkage anyway: every report already points at
+-- a booking via reports.booking_id, and that booking carries the patient
+-- identity (either bookings.patient_user_id for online patients, or
+-- bookings.patient_snapshot for walk-ins). So we don't need a new table —
+-- we just stop forcing the FK on rows that don't have one.
+--
+-- For online patients, reports.patient_user_id is still populated by the
+-- upload handler, so the existing patient-self query (`SELECT … WHERE
+-- patient_user_id = $me`) keeps working unchanged.
+--
+-- If a walk-in later signs up with the same mobile, a follow-up task can
+-- backfill patient_user_id on historical reports + bookings.
+
+ALTER TABLE reports ALTER COLUMN patient_user_id DROP NOT NULL;

@@ -8,6 +8,7 @@ import { Card, CardContent } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Skeleton } from '../../components/ui/skeleton';
 import { useDepartments, useDoctors } from '../../hooks/queries';
+import { DoctorAvatar } from '../../components/shared/DoctorAvatar';
 import { formatCurrencyINR } from '../../lib/utils';
 import { CLINIC_FULL_NAME } from '../../config/featureFlags';
 
@@ -89,12 +90,17 @@ export default function DoctorsPage() {
             {doctors.map((d) => (
               <Card key={d.id} className="overflow-hidden transition-all hover:border-primary/40 hover:shadow-md">
                 <div className="flex flex-col items-center bg-accent/40 p-6 text-center">
-                  <div className="flex h-24 w-24 items-center justify-center rounded-full bg-primary text-3xl font-bold text-primary-foreground">
-                    {d.first_name.charAt(0)}
-                    {d.last_name.charAt(0)}
-                  </div>
+                  <DoctorAvatar
+                    firstName={d.first_name}
+                    lastName={d.last_name}
+                    profilePhotoUrl={d.profile_photo_url}
+                    cacheBust={(d as unknown as { updated_at?: string }).updated_at}
+                    size={96}
+                  />
                   <div className="mt-3 flex items-center gap-1.5">
-                    <h3 className="font-semibold">{d.display_name}</h3>
+                    <h3 className="font-semibold">
+                      {d.display_name ?? `Dr. ${d.first_name} ${d.last_name}`}
+                    </h3>
                     {d.is_verified && <BadgeCheck className="h-4 w-4 text-blue-600" aria-label="Verified" />}
                   </div>
                   <p className="text-sm text-muted-foreground">{d.speciality}</p>
@@ -102,7 +108,7 @@ export default function DoctorsPage() {
 
                 <CardContent className="space-y-3 pt-5">
                   <div className="flex flex-wrap gap-1.5">
-                    {d.qualifications.slice(0, 3).map((q) => (
+                    {(d.qualifications ?? []).slice(0, 3).map((q) => (
                       <Badge key={q} variant="outline" className="text-xs">
                         {q}
                       </Badge>
@@ -112,18 +118,18 @@ export default function DoctorsPage() {
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-1">
                       <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                      <span className="font-semibold">{d.rating_avg.toFixed(1)}</span>
+                      <span className="font-semibold">{Number(d.rating_avg).toFixed(1)}</span>
                       <span className="text-muted-foreground">({d.rating_count})</span>
                     </div>
                     <div className="font-semibold text-primary">
-                      {formatCurrencyINR(d.consultation_fee)}
+                      {formatCurrencyINR(Number(d.consultation_fee))}
                     </div>
                   </div>
 
                   <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1">
                       <MapPin className="h-3 w-3" />
-                      {d.centers[0]?.city ?? 'Kolkata'}
+                      {d.centers?.[0]?.city ?? 'Kolkata'}
                     </span>
                     {d.offers_home_visit && (
                       <span className="inline-flex items-center gap-1">

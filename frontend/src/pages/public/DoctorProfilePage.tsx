@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Badge } from '../../components/ui/badge';
 import { Skeleton } from '../../components/ui/skeleton';
 import { useDoctor, useReviews } from '../../hooks/queries';
+import { DoctorAvatar } from '../../components/shared/DoctorAvatar';
 import { formatCurrencyINR } from '../../lib/utils';
 import {
   CLINIC_FULL_NAME,
@@ -78,13 +79,18 @@ export default function DoctorProfilePage() {
           <div className="lg:col-span-2">
             <Card>
               <CardContent className="flex flex-col items-start gap-6 p-6 md:flex-row">
-                <div className="flex h-32 w-32 shrink-0 items-center justify-center rounded-full bg-primary text-4xl font-bold text-primary-foreground">
-                  {doctor.first_name.charAt(0)}
-                  {doctor.last_name.charAt(0)}
-                </div>
+                <DoctorAvatar
+                  firstName={doctor.first_name}
+                  lastName={doctor.last_name}
+                  profilePhotoUrl={doctor.profile_photo_url}
+                  cacheBust={(doctor as unknown as { updated_at?: string }).updated_at}
+                  size={128}
+                />
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
-                    <h1 className="text-3xl font-bold">{doctor.display_name}</h1>
+                    <h1 className="text-3xl font-bold">
+                      {doctor.display_name ?? `Dr. ${doctor.first_name} ${doctor.last_name}`}
+                    </h1>
                     {doctor.is_verified && (
                       <BadgeCheck className="h-6 w-6 text-blue-600" aria-label="Verified" />
                     )}
@@ -99,7 +105,7 @@ export default function DoctorProfilePage() {
                   </Link>
 
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    {doctor.qualifications.map((q) => (
+                    {(doctor.qualifications ?? []).map((q) => (
                       <Badge key={q} variant="outline">
                         {q}
                       </Badge>
@@ -109,7 +115,7 @@ export default function DoctorProfilePage() {
                   <div className="mt-4 flex items-center gap-4 text-sm">
                     <div className="flex items-center gap-1">
                       <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                      <span className="font-semibold">{doctor.rating_avg.toFixed(1)}</span>
+                      <span className="font-semibold">{Number(doctor.rating_avg).toFixed(1)}</span>
                       <span className="text-muted-foreground">({doctor.rating_count} ratings)</span>
                     </div>
                     {doctor.offers_home_visit && (
@@ -151,16 +157,18 @@ export default function DoctorProfilePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                {doctor.centers.map((c) => (
+                {(doctor.centers ?? []).map((c) => (
                   <div key={c.id} className="rounded-md border p-3">
                     <div className="font-medium">{c.center_name}</div>
                     <div className="text-sm text-muted-foreground">{c.address}</div>
-                    <a
-                      href={`tel:${c.phone.replace(/\s/g, '')}`}
-                      className="mt-1 inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                    >
-                      <Phone className="h-3.5 w-3.5" /> {c.phone}
-                    </a>
+                    {c.phone && (
+                      <a
+                        href={`tel:${c.phone.replace(/\s/g, '')}`}
+                        className="mt-1 inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                      >
+                        <Phone className="h-3.5 w-3.5" /> {c.phone}
+                      </a>
+                    )}
                   </div>
                 ))}
               </CardContent>

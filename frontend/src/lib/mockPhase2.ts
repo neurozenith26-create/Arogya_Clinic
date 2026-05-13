@@ -97,124 +97,15 @@ export function generateBookingCode(type: 'doctor_appointment' | 'test_booking')
   return `AROGYA-TEST-${yyyymm}-${String(nextTestSeq++).padStart(6, '0')}`;
 }
 
-// Seed a few existing bookings so the patient dashboard + admin views look alive
-export const mockBookings: MockBooking[] = [
-  {
-    id: nextBookingId++,
-    booking_code: generateBookingCode('doctor_appointment'),
-    booking_type: 'doctor_appointment',
-    booking_origin: 'online',
-    visit_type: 'in_clinic',
-    patient_user_id: 'patient-demo',
-    patient_snapshot: {
-      first_name: 'Demo',
-      last_name: 'Patient',
-      mobile: '9999900000',
-      email: 'demo@patient.test',
-      date_of_birth: '1985-04-15',
-      gender: 'M',
-    },
-    doctor_user_id: 'doc-001',
-    doctor_name: 'Dr. A K Jain',
-    doctor_speciality: 'Diabetologist & General Physician',
-    doctor_center: 'Salt Lake',
-    items: [
-      {
-        item_name: 'Consultation — Dr. A K Jain',
-        item_type: 'doctor_consultation',
-        unit_price: 700,
-        quantity: 1,
-      },
-    ],
-    scheduled_date: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10),
-    scheduled_start_time: '10:30',
-    subtotal_amount: 700,
-    home_visit_charge: 0,
-    total_amount: 700,
-    advance_amount: 350,
-    balance_amount: 350,
-    booking_status: 'confirmed',
-    payment_status: 'partial',
-    collection_status: 'not_required',
-    reason_for_visit: 'Routine diabetes check-up',
-    created_at: new Date(Date.now() - 86400000).toISOString(),
-  },
-  {
-    id: nextBookingId++,
-    booking_code: generateBookingCode('test_booking'),
-    booking_type: 'test_booking',
-    booking_origin: 'online',
-    visit_type: 'home_visit',
-    patient_user_id: 'patient-demo',
-    patient_snapshot: {
-      first_name: 'Demo',
-      last_name: 'Patient',
-      mobile: '9999900000',
-      email: 'demo@patient.test',
-      date_of_birth: '1985-04-15',
-      gender: 'M',
-    },
-    items: [
-      { item_name: 'Complete Blood Count (CBC)', item_type: 'test', unit_price: 350, quantity: 1 },
-      { item_name: 'Lipid Profile', item_type: 'test', unit_price: 750, quantity: 1 },
-    ],
-    scheduled_date: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
-    scheduled_start_time: '08:00',
-    delivery_address: {
-      line1: 'CD-85 Sector I',
-      line2: 'Salt Lake City',
-      city: 'Kolkata',
-      state: 'West Bengal',
-      pincode: '700064',
-    },
-    subtotal_amount: 1100,
-    home_visit_charge: 150,
-    total_amount: 1250,
-    advance_amount: 625,
-    balance_amount: 625,
-    booking_status: 'confirmed',
-    payment_status: 'partial',
-    collection_status: 'assigned',
-    assigned_staff_name: 'Rajesh (Lab Tech)',
-    created_at: new Date(Date.now() - 3600000).toISOString(),
-  },
-  {
-    id: nextBookingId++,
-    booking_code: generateBookingCode('test_booking'),
-    booking_type: 'test_booking',
-    booking_origin: 'walk_in',
-    visit_type: 'in_clinic',
-    patient_user_id: null,
-    patient_snapshot: {
-      first_name: 'Walk-in',
-      last_name: 'Patient',
-      mobile: '8888800000',
-    },
-    items: [
-      { item_name: 'Digital X-Ray — Chest', item_type: 'test', unit_price: 400, quantity: 1 },
-      { item_name: 'ECG', item_type: 'test', unit_price: 300, quantity: 1 },
-    ],
-    scheduled_date: new Date().toISOString().slice(0, 10),
-    scheduled_start_time: '15:00',
-    subtotal_amount: 700,
-    home_visit_charge: 0,
-    total_amount: 700,
-    advance_amount: 700,
-    balance_amount: 0,
-    booking_status: 'completed',
-    payment_status: 'paid',
-    collection_status: 'not_required',
-    created_at: new Date(Date.now() - 7200000).toISOString(),
-    reports: [
-      {
-        id: 1,
-        file_name: 'CBC_Report_AROGYA-TEST.pdf',
-        uploaded_at: new Date(Date.now() - 1800000).toISOString(),
-        report_type: 'lab_report',
-      },
-    ],
-  },
-];
+// Mock bookings used by the handful of admin/patient pages that haven't been
+// rewired to the real API yet (analytics, dashboard overview, home-collection
+// board, etc.). The bookings list + walk-in flow + reports are LIVE — they no
+// longer touch this array. Empty by default so nothing stale shows.
+export const mockBookings: MockBooking[] = [];
+
+// Suppress "imported but unused" warning when this file is consumed only for
+// type-side imports.
+void nextBookingId;
 
 export function addBooking(booking: Omit<MockBooking, 'id'>): MockBooking {
   const next = { ...booking, id: nextBookingId++ };

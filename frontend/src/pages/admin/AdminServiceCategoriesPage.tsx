@@ -3,25 +3,23 @@ import { Plus, Edit, Trash2, Save, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Textarea } from '../../components/ui/textarea';
 import { Label } from '../../components/ui/label';
 import { Badge } from '../../components/ui/badge';
 import { Skeleton } from '../../components/ui/skeleton';
 import { DataTable, type Column } from '../../components/admin/DataTable';
 import {
-  useAdminDepartments,
-  useCreateDepartment,
-  useDeleteDepartment,
-  useUpdateDepartment,
-  type AdminDepartmentRow,
-  type DepartmentInput,
+  useAdminServiceCategories,
+  useCreateServiceCategory,
+  useDeleteServiceCategory,
+  useUpdateServiceCategory,
+  type AdminServiceCategoryRow,
+  type ServiceCategoryInput,
 } from '../../hooks/queries';
 import { getApiErrorMessage } from '../../lib/apiClient';
 
-const emptyForm: DepartmentInput = {
+const emptyForm: ServiceCategoryInput = {
   name: '',
   slug: '',
-  description: '',
   display_order: 0,
   is_active: true,
 };
@@ -35,22 +33,21 @@ function autoSlug(name: string): string {
     .slice(0, 150);
 }
 
-export default function AdminDepartmentsPage() {
-  const { data: departments = [], isLoading } = useAdminDepartments();
-  const createMutation = useCreateDepartment();
-  const updateMutation = useUpdateDepartment();
-  const deleteMutation = useDeleteDepartment();
+export default function AdminServiceCategoriesPage() {
+  const { data: categories = [], isLoading } = useAdminServiceCategories();
+  const createMutation = useCreateServiceCategory();
+  const updateMutation = useUpdateServiceCategory();
+  const deleteMutation = useDeleteServiceCategory();
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState<DepartmentInput>(emptyForm);
+  const [form, setForm] = useState<ServiceCategoryInput>(emptyForm);
   const [slugTouched, setSlugTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Keep slug in sync with name until the admin types into it manually.
   useEffect(() => {
     if (!slugTouched) {
-      setForm((f) => ({ ...f, slug: autoSlug(f.name) }));
+      setForm((f) => ({ ...f, slug: autoSlug(f.name ?? '') }));
     }
   }, [form.name, slugTouched]);
 
@@ -70,16 +67,15 @@ export default function AdminDepartmentsPage() {
     setShowForm(true);
   };
 
-  const startEdit = (d: AdminDepartmentRow) => {
-    setEditingId(d.id);
+  const startEdit = (c: AdminServiceCategoryRow) => {
+    setEditingId(c.id);
     setForm({
-      name: d.name,
-      slug: d.slug,
-      description: d.description ?? '',
-      display_order: d.display_order,
-      is_active: d.is_active,
+      name: c.name,
+      slug: c.slug,
+      display_order: c.display_order,
+      is_active: c.is_active,
     });
-    setSlugTouched(true); // existing slug stays unless admin retypes it
+    setSlugTouched(true);
     setError(null);
     setShowForm(true);
   };
@@ -92,10 +88,9 @@ export default function AdminDepartmentsPage() {
       return;
     }
     try {
-      const payload: DepartmentInput = {
+      const payload: ServiceCategoryInput = {
         name: form.name.trim(),
         slug: form.slug?.trim() || undefined,
-        description: form.description?.trim() || null,
         display_order: Number(form.display_order ?? 0),
         is_active: form.is_active ?? true,
       };
@@ -106,58 +101,56 @@ export default function AdminDepartmentsPage() {
       }
       resetForm();
     } catch (err) {
-      setError(getApiErrorMessage(err, 'Could not save department'));
+      setError(getApiErrorMessage(err, 'Could not save category'));
     }
   };
 
-  const handleDelete = async (d: AdminDepartmentRow) => {
-    if (d.doctors_count > 0) {
+  const handleDelete = async (c: AdminServiceCategoryRow) => {
+    if (c.services_count > 0) {
       if (
         !window.confirm(
-          `${d.doctors_count} doctor(s) are assigned to "${d.name}". Deactivating won't remove them — their department label will just go blank on the public site. Continue?`,
+          `${c.services_count} service(s) belong to "${c.name}". Deactivating won't change their category label, but the category will be hidden from the public site. Continue?`,
         )
       ) {
         return;
       }
-    } else if (!window.confirm(`Deactivate "${d.name}"?`)) {
+    } else if (!window.confirm(`Deactivate "${c.name}"?`)) {
       return;
     }
     setError(null);
     try {
-      await deleteMutation.mutateAsync(d.id);
+      await deleteMutation.mutateAsync(c.id);
     } catch (err) {
-      setError(getApiErrorMessage(err, 'Could not delete department'));
+      setError(getApiErrorMessage(err, 'Could not delete category'));
     }
   };
 
-  const columns: Column<AdminDepartmentRow>[] = [
+  const columns: Column<AdminServiceCategoryRow>[] = [
     {
       key: 'name',
-      header: 'Department',
-      render: (d) => (
+      header: 'Category',
+      render: (c) => (
         <div>
-          <div className="font-medium">{d.name}</div>
-          <div className="font-mono text-xs text-muted-foreground">/{d.slug}</div>
+          <div className="font-medium">{c.name}</div>
+          <div className="font-mono text-xs text-muted-foreground">/{c.slug}</div>
         </div>
       ),
     },
     {
-      key: 'desc',
-      header: 'Description',
-      render: (d) => (
-        <span className="text-sm text-muted-foreground">{d.description ?? '—'}</span>
-      ),
+      key: 'services',
+      header: 'Services',
+      render: (c) => <Badge variant="outline">{c.services_count}</Badge>,
     },
     {
-      key: 'doctors',
-      header: 'Doctors',
-      render: (d) => <Badge variant="outline">{d.doctors_count}</Badge>,
+      key: 'order',
+      header: 'Display order',
+      render: (c) => c.display_order,
     },
     {
       key: 'status',
       header: 'Status',
-      render: (d) =>
-        d.is_active ? (
+      render: (c) =>
+        c.is_active ? (
           <Badge variant="success">Active</Badge>
         ) : (
           <Badge variant="destructive">Inactive</Badge>
@@ -166,13 +159,13 @@ export default function AdminDepartmentsPage() {
     {
       key: 'actions',
       header: '',
-      render: (d) => (
+      render: (c) => (
         <div className="flex justify-end gap-1">
           <Button
             variant="ghost"
             size="icon"
             className="h-8 w-8"
-            onClick={() => startEdit(d)}
+            onClick={() => startEdit(c)}
             aria-label="Edit"
           >
             <Edit className="h-3.5 w-3.5" />
@@ -181,7 +174,7 @@ export default function AdminDepartmentsPage() {
             variant="ghost"
             size="icon"
             className="h-8 w-8"
-            onClick={() => handleDelete(d)}
+            onClick={() => handleDelete(c)}
             aria-label="Delete"
             disabled={deleteMutation.isPending}
           >
@@ -199,14 +192,16 @@ export default function AdminDepartmentsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Departments</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Test category</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {isLoading ? 'Loading…' : `${departments.length} department(s)`}
+            {isLoading
+              ? 'Loading…'
+              : `${categories.length} categor${categories.length === 1 ? 'y' : 'ies'}`}
           </p>
         </div>
         {!showForm && (
           <Button onClick={startCreate}>
-            <Plus className="mr-1 h-4 w-4" /> Add Department
+            <Plus className="mr-1 h-4 w-4" /> Add test category
           </Button>
         )}
       </div>
@@ -215,7 +210,7 @@ export default function AdminDepartmentsPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-base">
-              {editingId !== null ? 'Edit department' : 'Add department'}
+              {editingId !== null ? 'Edit test category' : 'Add test category'}
             </CardTitle>
             <Button variant="ghost" size="icon" onClick={resetForm} aria-label="Close">
               <X className="h-4 w-4" />
@@ -225,54 +220,46 @@ export default function AdminDepartmentsPage() {
             <form className="grid gap-3" onSubmit={handleSubmit}>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <Label htmlFor="dept-name">Name *</Label>
+                  <Label htmlFor="cat-name">Name *</Label>
                   <Input
-                    id="dept-name"
+                    id="cat-name"
                     value={form.name ?? ''}
                     onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                    placeholder="Cardiology"
+                    placeholder="Pathology"
                     className="mt-1.5"
                     autoFocus
                   />
                 </div>
                 <div>
-                  <Label htmlFor="dept-slug">Slug (auto-generated)</Label>
+                  <Label htmlFor="cat-slug">Slug (auto)</Label>
                   <Input
-                    id="dept-slug"
+                    id="cat-slug"
                     value={form.slug ?? ''}
                     onChange={(e) => {
                       setSlugTouched(true);
                       setForm((f) => ({ ...f, slug: e.target.value.toLowerCase() }));
                     }}
-                    placeholder="cardiology"
+                    placeholder="pathology"
                     className="mt-1.5 font-mono text-sm"
                   />
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Used in URLs (/departments/{form.slug || 'name'}).
+                    Used in URLs (/services?category={form.slug || 'name'}).
                   </p>
                 </div>
               </div>
-              <div>
-                <Label htmlFor="dept-desc">Description</Label>
-                <Textarea
-                  id="dept-desc"
-                  rows={2}
-                  value={form.description ?? ''}
-                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  placeholder="Heart and cardiovascular care..."
-                  className="mt-1.5"
-                />
-              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <Label htmlFor="dept-order">Display order</Label>
+                  <Label htmlFor="cat-order">Display order</Label>
                   <Input
-                    id="dept-order"
+                    id="cat-order"
                     type="number"
                     min={0}
                     value={form.display_order ?? 0}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, display_order: Number(e.target.value) || 0 }))
+                      setForm((f) => ({
+                        ...f,
+                        display_order: Number(e.target.value) || 0,
+                      }))
                     }
                     className="mt-1.5"
                   />
@@ -284,9 +271,11 @@ export default function AdminDepartmentsPage() {
                   <input
                     type="checkbox"
                     checked={form.is_active ?? true}
-                    onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, is_active: e.target.checked }))
+                    }
                   />
-                  Active (visible on public site)
+                  Active (visible in Services form &amp; public site)
                 </label>
               </div>
               {error && (
@@ -300,8 +289,8 @@ export default function AdminDepartmentsPage() {
                   {submitting
                     ? 'Saving…'
                     : editingId !== null
-                      ? 'Update department'
-                      : 'Create department'}
+                      ? 'Update category'
+                      : 'Create category'}
                 </Button>
                 <Button type="button" variant="ghost" onClick={resetForm}>
                   Cancel
@@ -314,7 +303,11 @@ export default function AdminDepartmentsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">All departments</CardTitle>
+          <CardTitle className="text-base">All categories</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Categories you create here appear immediately in the Category dropdown on
+            the Services &amp; Tests page.
+          </p>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -326,8 +319,8 @@ export default function AdminDepartmentsPage() {
           ) : (
             <DataTable
               columns={columns}
-              data={departments}
-              emptyMessage="No departments yet — click Add Department to create your first one."
+              data={categories}
+              emptyMessage="No categories yet — click Add test category to create one."
             />
           )}
         </CardContent>

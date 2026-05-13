@@ -1,18 +1,20 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import { ArrowLeft, Plus, Search, Trash2, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, Plus, Search, Trash2 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Badge } from '../../components/ui/badge';
-import { mockServices } from '../../lib/mockData';
-import { addBooking, generateBookingCode } from '../../lib/mockPhase2';
+import { useServices, useCreateWalkInBill, type WalkInBillPayload } from '../../hooks/queries';
 import { formatCurrencyINR } from '../../lib/utils';
+import { getApiErrorMessage } from '../../lib/apiClient';
 import { useAuthStore } from '../../stores/authStore';
 
-interface BillItem {
+type PaymentMethod = 'cash' | 'upi_qr_offline' | 'card_swipe' | 'cheque';
+
+interface DraftItem {
   service_id?: number;
   item_name: string;
   unit_price: number;
@@ -23,6 +25,9 @@ interface BillItem {
 export default function WalkInBillPage() {
   const navigate = useNavigate();
   const admin = useAuthStore((s) => s.user);
+  const createMutation = useCreateWalkInBill();
+  const { data: catalog = [] } = useServices();
+
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [patient, setPatient] = useState({
@@ -30,30 +35,31 @@ export default function WalkInBillPage() {
     last_name: '',
     mobile: '',
     age: '',
-    gender: 'M',
+    gender: 'M' as 'M' | 'F' | 'O',
+    email: '',
   });
-  const [items, setItems] = useState<BillItem[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'upi_qr_offline' | 'card_swipe' | 'cheque'>('cash');
+  const [items, setItems] = useState<DraftItem[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [notes, setNotes] = useState('');
-  const [confirmed, setConfirmed] = useState<{ id: number; code: string } | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const subtotal = items.reduce((s, i) => s + i.unit_price * i.quantity, 0);
   const balance = Math.max(0, subtotal - paymentAmount);
 
   const matches = !search
     ? []
-    : mockServices.filter((s) => s.name.toLowerCase().includes(search.toLowerCase())).slice(0, 5);
+    : catalog.filter((s) => s.name.toLowerCase().includes(search.toLowerCase())).slice(0, 5);
 
   const addCatalogItem = (serviceId: number) => {
-    const s = mockServices.find((x) => x.id === serviceId);
+    const s = catalog.find((x) => x.id === serviceId);
     if (!s) return;
     setItems([
       ...items,
       {
         service_id: s.id,
         item_name: s.name,
-        unit_price: s.price,
+        unit_price: Number(s.price),
         quantity: 1,
         item_type: s.is_package ? 'package' : 'test',
       },
@@ -62,72 +68,72 @@ export default function WalkInBillPage() {
     setShowSearch(false);
   };
 
-  const addCustomItem = () => {
+  const addCustomItem = () =>
     setItems([...items, { item_name: '', unit_price: 0, quantity: 1, item_type: 'custom' }]);
-  };
 
-  const updateItem = (i: number, patch: Partial<BillItem>) => {
+  const updateItem = (i: number, patch: Partial<DraftItem>) =>
     setItems(items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
-  };
+
   const removeItem = (i: number) => setItems(items.filter((_, idx) => idx !== i));
 
-  const submit = () => {
-    if (items.length === 0 || !patient.first_name || !patient.mobile) return;
-    const today = format(new Date(), 'yyyy-MM-dd');
-    const now = format(new Date(), 'HH:mm');
-    const booking = addBooking({
-      booking_code: generateBookingCode('test_booking'),
-      booking_type: 'test_booking',
-      booking_origin: 'walk_in',
-      visit_type: 'in_clinic',
-      patient_user_id: null,
-      patient_snapshot: {
-        first_name: patient.first_name,
-        last_name: patient.last_name,
-        mobile: patient.mobile,
+  const submit = async () => {
+    setFormError(null);
+    if (!patient.first_name.trim()) return setFormError('Patient first name is required');
+    if (!/^[0-9]{10,15}$/.test(patient.mobile)) {
+      return setFormError('Enter a valid 10–15 digit mobile number');
+    }
+    if (items.length === 0) return setFormError('Add at least one item');
+
+    const payload: WalkInBillPayload = {
+      patient: {
+        first_name: patient.first_name.trim(),
+        last_name: patient.last_name.trim() || undefined,
+        mobile: patient.mobile.trim(),
+        age: patient.age ? Number(patient.age) : undefined,
+        gender: patient.gender,
+        email: patient.email.trim() || undefined,
       },
-      items: items.map((i) => ({
-        item_name: i.item_name,
-        item_type: i.item_type,
-        unit_price: i.unit_price,
-        quantity: i.quantity,
-      })),
-      scheduled_date: today,
-      scheduled_start_time: now,
-      subtotal_amount: subtotal,
-      home_visit_charge: 0,
-      total_amount: subtotal,
-      advance_amount: paymentAmount,
-      balance_amount: balance,
-      booking_status: balance > 0 ? 'in_progress' : 'completed',
-      payment_status: balance > 0 ? 'partial' : 'paid',
-      collection_status: 'not_required',
-      created_at: new Date().toISOString(),
-    });
-    setConfirmed({ id: booking.id, code: booking.booking_code });
+      items: items.map((i) =>
+        i.item_type === 'custom'
+          ? {
+              item_name: i.item_name.trim(),
+              unit_price: i.unit_price,
+              quantity: i.quantity,
+              item_type: 'custom' as const,
+            }
+          : { service_id: i.service_id!, quantity: i.quantity },
+      ),
+      payment:
+        paymentAmount > 0
+          ? {
+              method: paymentMethod,
+              amount: paymentAmount,
+              notes: notes.trim() || undefined,
+            }
+          : undefined,
+    };
+
+    try {
+      const created = await createMutation.mutateAsync(payload);
+      navigate(`/admin/bookings/${created.id}`);
+    } catch (err) {
+      setFormError(getApiErrorMessage(err, 'Could not create bill'));
+    }
   };
 
-  if (confirmed) {
+  if (createMutation.isSuccess && createMutation.data) {
     return (
       <div className="mx-auto max-w-xl">
         <div className="rounded-lg border-2 border-green-500 bg-green-50 p-6 text-center">
           <CheckCircle2 className="mx-auto h-12 w-12 text-green-600" />
           <h2 className="mt-3 text-xl font-bold text-green-900">Bill created</h2>
-          <p className="mt-1 font-mono text-sm">{confirmed.code}</p>
-          <div className="mt-5 flex justify-center gap-2">
-            <Button onClick={() => navigate(`/admin/bookings/${confirmed.id}`)}>View bill</Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setConfirmed(null);
-                setItems([]);
-                setPatient({ first_name: '', last_name: '', mobile: '', age: '', gender: 'M' });
-                setPaymentAmount(0);
-              }}
-            >
-              New bill
-            </Button>
-          </div>
+          <p className="mt-1 font-mono text-sm">{createMutation.data.booking_code}</p>
+          <Button
+            className="mt-5"
+            onClick={() => navigate(`/admin/bookings/${createMutation.data!.id}`)}
+          >
+            View bill
+          </Button>
         </div>
       </div>
     );
@@ -170,9 +176,11 @@ export default function WalkInBillPage() {
                 <Label>Mobile *</Label>
                 <Input
                   value={patient.mobile}
-                  onChange={(e) => setPatient({ ...patient, mobile: e.target.value })}
+                  onChange={(e) =>
+                    setPatient({ ...patient, mobile: e.target.value.replace(/\D/g, '') })
+                  }
                   inputMode="numeric"
-                  maxLength={10}
+                  maxLength={15}
                   className="mt-1.5"
                 />
               </div>
@@ -180,8 +188,33 @@ export default function WalkInBillPage() {
                 <Label>Age</Label>
                 <Input
                   value={patient.age}
-                  onChange={(e) => setPatient({ ...patient, age: e.target.value })}
+                  onChange={(e) =>
+                    setPatient({ ...patient, age: e.target.value.replace(/\D/g, '') })
+                  }
                   inputMode="numeric"
+                  className="mt-1.5"
+                />
+              </div>
+              <div>
+                <Label>Gender</Label>
+                <select
+                  value={patient.gender}
+                  onChange={(e) =>
+                    setPatient({ ...patient, gender: e.target.value as never })
+                  }
+                  className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="M">Male</option>
+                  <option value="F">Female</option>
+                  <option value="O">Other</option>
+                </select>
+              </div>
+              <div>
+                <Label>Email (optional)</Label>
+                <Input
+                  type="email"
+                  value={patient.email}
+                  onChange={(e) => setPatient({ ...patient, email: e.target.value })}
                   className="mt-1.5"
                 />
               </div>
@@ -220,7 +253,7 @@ export default function WalkInBillPage() {
                           >
                             <span>{s.name}</span>
                             <span className="text-xs text-muted-foreground">
-                              {formatCurrencyINR(s.price)}
+                              {formatCurrencyINR(Number(s.price))}
                             </span>
                           </button>
                         </li>
@@ -237,21 +270,33 @@ export default function WalkInBillPage() {
               ) : (
                 <ul className="space-y-2">
                   {items.map((it, idx) => (
-                    <li key={idx} className="grid items-center gap-2 rounded-md border p-2 sm:grid-cols-[1fr,80px,90px,90px,32px]">
+                    <li
+                      key={idx}
+                      className="grid items-center gap-2 rounded-md border p-2 sm:grid-cols-[1fr,80px,90px,90px,32px]"
+                    >
                       <Input
                         value={it.item_name}
                         onChange={(e) => updateItem(idx, { item_name: e.target.value })}
                         placeholder="Item name"
+                        readOnly={it.item_type !== 'custom'}
                       />
                       <Input
                         type="number"
+                        min="1"
                         value={it.quantity}
-                        onChange={(e) => updateItem(idx, { quantity: Number(e.target.value) || 1 })}
+                        onChange={(e) =>
+                          updateItem(idx, { quantity: Number(e.target.value) || 1 })
+                        }
                       />
                       <Input
                         type="number"
+                        min="0"
+                        step="0.01"
                         value={it.unit_price}
-                        onChange={(e) => updateItem(idx, { unit_price: Number(e.target.value) || 0 })}
+                        onChange={(e) =>
+                          updateItem(idx, { unit_price: Number(e.target.value) || 0 })
+                        }
+                        readOnly={it.item_type !== 'custom'}
                       />
                       <div className="text-right text-sm font-semibold">
                         {formatCurrencyINR(it.unit_price * it.quantity)}
@@ -281,16 +326,20 @@ export default function WalkInBillPage() {
               <CardTitle className="text-base">Payment received</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Record any amount received now. If the patient pays later, use the
+                <strong> Record payment</strong> button on the booking detail page.
+              </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <Label>Method</Label>
                   <select
                     value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value as never)}
+                    onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
                     className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                   >
                     <option value="cash">Cash</option>
-                    <option value="upi_qr_offline">UPI QR (in-clinic)</option>
+                    <option value="upi_qr_offline">UPI QR</option>
                     <option value="card_swipe">Card swipe</option>
                     <option value="cheque">Cheque</option>
                   </select>
@@ -299,6 +348,8 @@ export default function WalkInBillPage() {
                   <Label>Amount</Label>
                   <Input
                     type="number"
+                    min="0"
+                    step="0.01"
                     value={paymentAmount}
                     onChange={(e) => setPaymentAmount(Number(e.target.value) || 0)}
                     className="mt-1.5"
@@ -337,13 +388,26 @@ export default function WalkInBillPage() {
             <div className="pt-2 text-xs text-muted-foreground">
               Created by {admin?.first_name ?? 'Admin'} · {format(new Date(), 'd MMM, h:mm a')}
             </div>
+
+            {formError && (
+              <div className="flex items-start gap-2 rounded-md border border-destructive bg-destructive/10 p-2 text-xs text-destructive">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
+
             <Button
               className="mt-3 w-full"
               size="lg"
               onClick={submit}
-              disabled={items.length === 0 || !patient.first_name || !patient.mobile}
+              disabled={
+                createMutation.isPending ||
+                items.length === 0 ||
+                !patient.first_name ||
+                !patient.mobile
+              }
             >
-              Create Bill &amp; Print Invoice
+              {createMutation.isPending ? 'Creating…' : 'Create Bill & Print Invoice'}
             </Button>
           </CardContent>
         </Card>

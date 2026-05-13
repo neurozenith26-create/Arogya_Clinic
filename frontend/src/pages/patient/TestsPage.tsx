@@ -2,8 +2,9 @@ import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { useAuthStore } from '../../stores/authStore';
-import { mockBookings } from '../../lib/mockPhase2';
+import { Skeleton } from '../../components/ui/skeleton';
+import { useMyBookings } from '../../hooks/queries';
+import { BookingStatusBadge } from '../../components/shared/BookingStatusBadge';
 import { formatCurrencyINR } from '../../lib/utils';
 
 const collectionLabel: Record<string, string> = {
@@ -16,10 +17,8 @@ const collectionLabel: Record<string, string> = {
 };
 
 export default function TestsPage() {
-  const user = useAuthStore((s) => s.user);
-  const tests = mockBookings.filter(
-    (b) => b.patient_user_id === user?.id && b.booking_type === 'test_booking',
-  );
+  const { data: bookings = [], isLoading } = useMyBookings();
+  const tests = bookings.filter((b) => b.booking_type === 'test_booking');
 
   return (
     <Card>
@@ -30,7 +29,13 @@ export default function TestsPage() {
         </Button>
       </CardHeader>
       <CardContent>
-        {tests.length === 0 ? (
+        {isLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-24 w-full" />
+            ))}
+          </div>
+        ) : tests.length === 0 ? (
           <p className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
             No test bookings yet.
           </p>
@@ -42,18 +47,18 @@ export default function TestsPage() {
                 to={`/dashboard/bookings/${b.id}`}
                 className="block rounded-md border p-4 transition-colors hover:bg-accent/40"
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="font-semibold">
-                      {b.items.map((i) => i.item_name).join(', ')}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-semibold">
+                      {b.items_summary ?? 'Test booking'}
                     </div>
                     <div className="mt-1 text-sm">
-                      {b.scheduled_date} at {b.scheduled_start_time} ·{' '}
+                      {b.scheduled_date} at {b.scheduled_start_time?.slice(0, 5)} ·{' '}
                       {b.visit_type === 'home_visit' ? 'Home Collection' : 'In-Clinic'}
                     </div>
                     {b.visit_type === 'home_visit' && (
                       <div className="mt-1 text-xs text-primary">
-                        Status: {collectionLabel[b.collection_status]}
+                        Status: {collectionLabel[b.collection_status] ?? b.collection_status}
                       </div>
                     )}
                     <div className="mt-1 font-mono text-xs text-muted-foreground">
@@ -61,15 +66,13 @@ export default function TestsPage() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <Badge variant={b.booking_status === 'completed' ? 'success' : 'secondary'}>
-                      {b.booking_status.replace('_', ' ')}
-                    </Badge>
+                    <BookingStatusBadge status={b.booking_status} />
                     <div className="mt-1 text-sm font-semibold text-primary">
-                      {formatCurrencyINR(b.total_amount)}
+                      {formatCurrencyINR(Number(b.total_amount))}
                     </div>
-                    {(b.reports?.length ?? 0) > 0 && (
+                    {b.reports_count > 0 && (
                       <Badge variant="verified" className="mt-1">
-                        {b.reports!.length} report(s) ready
+                        {b.reports_count} report(s) ready
                       </Badge>
                     )}
                   </div>

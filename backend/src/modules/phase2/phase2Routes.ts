@@ -35,6 +35,112 @@ router.patch('/me', requireAuth, async (req, res, next) => {
   }
 });
 
+// ─── Admin: serviceable pincodes CRUD ──────────────────────────────────────
+
+const pincodeCreateSchema = z.object({
+  pincode: z.string().trim().regex(/^[1-9][0-9]{5}$/, 'Must be a 6-digit Indian pincode'),
+  city: z.string().trim().max(100).nullable().optional(),
+  state: z.string().trim().max(50).nullable().optional(),
+  zone: z.string().trim().max(50).nullable().optional(),
+  home_visit_charge: z.number().nonnegative().default(0),
+  collection_lead_time_hours: z.number().int().nonnegative().default(4),
+  is_active: z.boolean().optional(),
+});
+const pincodeUpdateSchema = pincodeCreateSchema.partial();
+
+router.get('/admin/serviceable-pincodes', requireAuth, requireRole('admin', 'super_admin'), async (_req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT id, pincode, city, state, zone, home_visit_charge,
+              collection_lead_time_hours, is_active, created_at, updated_at
+       FROM serviceable_pincodes
+       ORDER BY pincode`,
+    );
+    res.json({ data: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/admin/serviceable-pincodes', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = pincodeCreateSchema.parse(req.body);
+    // pincode is UNIQUE — pre-check so we return a friendly 409 instead of
+    // letting pg's 23505 surface.
+    const dup = await query<{ id: number }>(
+      `SELECT id FROM serviceable_pincodes WHERE pincode = $1`,
+      [data.pincode],
+    );
+    if (dup.rows.length > 0) {
+      throw new HttpError(
+        409,
+        `Pincode ${data.pincode} is already in the serviceable list.`,
+        'DUPLICATE_PINCODE',
+      );
+    }
+    const result = await query<{ id: number }>(
+      `INSERT INTO serviceable_pincodes
+         (pincode, city, state, zone, home_visit_charge, collection_lead_time_hours, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE))
+       RETURNING id`,
+      [
+        data.pincode,
+        data.city ?? null,
+        data.state ?? null,
+        data.zone ?? null,
+        data.home_visit_charge,
+        data.collection_lead_time_hours,
+        data.is_active ?? null,
+      ],
+    );
+    res.status(201).json({ data: { id: result.rows[0].id } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/admin/serviceable-pincodes/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = pincodeUpdateSchema.parse(req.body);
+    const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+    if (entries.length === 0) {
+      res.json({ data: { updated: false } });
+      return;
+    }
+    const set = entries.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+    const values = entries.map(([, v]) => v);
+    const result = await query<{ id: number }>(
+      `UPDATE serviceable_pincodes SET ${set}, updated_at = NOW()
+       WHERE id = $1 RETURNING id`,
+      [req.params.id, ...values],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Pincode not found', 'NOT_FOUND');
+    }
+    res.json({ data: { updated: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/admin/serviceable-pincodes/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    // Soft delete (is_active=FALSE) so the patient pincode-check endpoint
+    // stops returning it without affecting historical bookings.
+    const result = await query<{ id: number }>(
+      `UPDATE serviceable_pincodes SET is_active = FALSE, updated_at = NOW()
+       WHERE id = $1 RETURNING id`,
+      [req.params.id],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Pincode not found', 'NOT_FOUND');
+    }
+    res.json({ data: { deleted: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ─── Pincode serviceability ────────────────────────────────────────────────
 
 router.get('/serviceable-pincodes/check', async (req, res, next) => {
@@ -62,28 +168,141 @@ router.get('/serviceable-pincodes/check', async (req, res, next) => {
 
 // ─── Slots ──────────────────────────────────────────────────────────────────
 
+// ─── Slot generation helpers ───────────────────────────────────────────────
+const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+type WeekdayKey = (typeof WEEKDAY_KEYS)[number];
+
+interface DailySchedule {
+  start: string;
+  end: string;
+  slot_minutes: number;
+  buffer_minutes?: number;
+  lunch_start?: string | null;
+  lunch_end?: string | null;
+  max_bookings?: number;
+}
+type WeeklySchedule = Partial<Record<WeekdayKey, DailySchedule | null>>;
+
+function timeToMinutes(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+function minutesToTime(m: number): string {
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+function isoWeekday(yyyymmdd: string): WeekdayKey {
+  // Parse as a calendar date in Asia/Kolkata-ish semantics — for slot purposes
+  // a YYYY-MM-DD has a well-defined weekday independent of timezone.
+  const [y, m, d] = yyyymmdd.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return WEEKDAY_KEYS[date.getUTCDay()];
+}
+
+function buildCandidateSlots(schedule: DailySchedule): string[] {
+  const slots: string[] = [];
+  const startM = timeToMinutes(schedule.start);
+  const endM = timeToMinutes(schedule.end);
+  const step = schedule.slot_minutes + (schedule.buffer_minutes ?? 0);
+  if (step <= 0) return slots;
+  const lunchStart =
+    schedule.lunch_start != null ? timeToMinutes(schedule.lunch_start) : null;
+  const lunchEnd =
+    schedule.lunch_end != null ? timeToMinutes(schedule.lunch_end) : null;
+  for (let t = startM; t + schedule.slot_minutes <= endM; t += step) {
+    // Skip any slot that overlaps the lunch window
+    if (lunchStart !== null && lunchEnd !== null) {
+      const slotEnd = t + schedule.slot_minutes;
+      if (slotEnd > lunchStart && t < lunchEnd) continue;
+    }
+    slots.push(minutesToTime(t));
+  }
+  return slots;
+}
+
 router.get('/doctors/:id/slots', async (req, res, next) => {
   try {
     const date = String(req.query.date ?? '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       throw new HttpError(400, 'date param required as YYYY-MM-DD', 'BAD_REQUEST');
     }
-    // Real implementation: read doctor_centers.schedule JSONB for weekday,
-    // subtract doctor_unavailability, subtract booked slots, return grid.
-    // Stub here returns a fixed range — fill in once Supabase wired.
-    res.json({
-      data: {
-        date,
-        slots: Array.from({ length: 16 }, (_, i) => {
-          const h = 9 + Math.floor(i / 4);
-          const m = (i % 4) * 15;
-          return {
-            time: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
-            available: i % 3 !== 0,
-          };
-        }),
-      },
+    const centerIdParam = req.query.center_id ? Number(req.query.center_id) : undefined;
+    const visitType = req.query.visit_type === 'home_visit' ? 'home_visit' : 'in_clinic';
+
+    // Pick the requested center, or the first active center if none specified.
+    const centerRes = await query<{
+      id: number;
+      schedule: WeeklySchedule | null;
+      home_visit_schedule: WeeklySchedule | null;
+    }>(
+      centerIdParam
+        ? `SELECT id, schedule, home_visit_schedule FROM doctor_centers
+           WHERE id = $1 AND doctor_user_id = $2 AND is_active = TRUE`
+        : `SELECT id, schedule, home_visit_schedule FROM doctor_centers
+           WHERE doctor_user_id = $1 AND is_active = TRUE
+           ORDER BY id LIMIT 1`,
+      centerIdParam ? [centerIdParam, req.params.id] : [req.params.id],
+    );
+    const center = centerRes.rows[0];
+    if (!center) {
+      res.json({ data: { date, slots: [] } });
+      return;
+    }
+
+    const weekly = visitType === 'home_visit' ? center.home_visit_schedule : center.schedule;
+    const daily = weekly?.[isoWeekday(date)] ?? null;
+    if (!daily) {
+      res.json({ data: { date, slots: [] } });
+      return;
+    }
+    const candidates = buildCandidateSlots(daily);
+
+    // Existing bookings for this doctor on this date in slot-blocking statuses.
+    const bookedRes = await query<{ scheduled_start_time: string }>(
+      `SELECT scheduled_start_time::text AS scheduled_start_time FROM bookings
+       WHERE doctor_user_id = $1
+         AND scheduled_date = $2
+         AND booking_status IN ('draft', 'pending_payment', 'confirmed', 'in_progress')`,
+      [req.params.id, date],
+    );
+    const bookedSet = new Set(bookedRes.rows.map((r) => r.scheduled_start_time.slice(0, 5)));
+
+    // Doctor-level unavailability windows for the date.
+    const unavailRes = await query<{ slot_start_time: string | null; slot_end_time: string | null }>(
+      `SELECT slot_start_time::text AS slot_start_time, slot_end_time::text AS slot_end_time
+       FROM doctor_unavailability
+       WHERE doctor_user_id = $1
+         AND unavailable_date = $2
+         AND (doctor_center_id IS NULL OR doctor_center_id = $3)`,
+      [req.params.id, date, center.id],
+    );
+    const wholeDayBlocked = unavailRes.rows.some((r) => r.slot_start_time === null);
+    if (wholeDayBlocked) {
+      res.json({ data: { date, slots: [] } });
+      return;
+    }
+    const blockedWindows = unavailRes.rows
+      .filter((r) => r.slot_start_time && r.slot_end_time)
+      .map((r) => ({
+        start: timeToMinutes(r.slot_start_time!.slice(0, 5)),
+        end: timeToMinutes(r.slot_end_time!.slice(0, 5)),
+      }));
+
+    const slots = candidates.map((time) => {
+      const minute = timeToMinutes(time);
+      const isBooked = bookedSet.has(time);
+      const isBlocked = blockedWindows.some(
+        (w) => minute + daily.slot_minutes > w.start && minute < w.end,
+      );
+      const available = !isBooked && !isBlocked;
+      return {
+        time,
+        available,
+        ...(isBooked ? { reason: 'booked' as const } : {}),
+        ...(isBlocked ? { reason: 'blocked' as const } : {}),
+      };
     });
+
+    res.json({ data: { date, center_id: center.id, visit_type: visitType, slots } });
   } catch (err) {
     next(err);
   }
@@ -278,12 +497,19 @@ router.post('/bookings/test', requireAuth, requireRole('patient'), async (req, r
 router.get('/bookings', requireAuth, requireRole('patient'), async (req, res, next) => {
   try {
     const result = await query(
-      `SELECT id, booking_code, booking_type, visit_type, scheduled_date, scheduled_start_time,
-              total_amount, advance_amount, balance_amount, booking_status, payment_status,
-              doctor_user_id, created_at
-       FROM bookings
-       WHERE patient_user_id = $1
-       ORDER BY scheduled_date DESC, scheduled_start_time DESC`,
+      `SELECT b.id, b.booking_code, b.booking_type, b.booking_origin, b.visit_type,
+              b.scheduled_date, b.scheduled_start_time,
+              b.total_amount, b.advance_amount, b.balance_amount,
+              b.booking_status, b.payment_status, b.collection_status,
+              b.doctor_user_id, b.created_at,
+              (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = b.doctor_user_id) AS doctor_name,
+              (SELECT speciality FROM users WHERE id = b.doctor_user_id) AS doctor_speciality,
+              (SELECT center_name FROM doctor_centers WHERE id = b.doctor_center_id) AS doctor_center,
+              (SELECT string_agg(item_name, ', ' ORDER BY id) FROM booking_items WHERE booking_id = b.id) AS items_summary,
+              (SELECT COUNT(*) FROM reports WHERE booking_id = b.id AND is_active = TRUE)::int AS reports_count
+       FROM bookings b
+       WHERE b.patient_user_id = $1
+       ORDER BY b.scheduled_date DESC NULLS LAST, b.scheduled_start_time DESC NULLS LAST, b.created_at DESC`,
       [req.user!.id],
     );
     res.json({ data: result.rows });
@@ -295,13 +521,19 @@ router.get('/bookings', requireAuth, requireRole('patient'), async (req, res, ne
 router.get('/bookings/:id', requireAuth, requireRole('patient'), async (req, res, next) => {
   try {
     const bookingRes = await query(
-      `SELECT * FROM bookings WHERE id = $1 AND patient_user_id = $2`,
+      `SELECT b.*,
+              (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = b.doctor_user_id) AS doctor_name,
+              (SELECT speciality FROM users WHERE id = b.doctor_user_id) AS doctor_speciality,
+              (SELECT center_name FROM doctor_centers WHERE id = b.doctor_center_id) AS doctor_center
+       FROM bookings b
+       WHERE b.id = $1 AND b.patient_user_id = $2`,
       [req.params.id, req.user!.id],
     );
     if (bookingRes.rows.length === 0) throw new HttpError(404, 'Booking not found', 'NOT_FOUND');
-    const items = await query('SELECT * FROM booking_items WHERE booking_id = $1', [req.params.id]);
+    const items = await query('SELECT * FROM booking_items WHERE booking_id = $1 ORDER BY id', [req.params.id]);
     const reports = await query(
-      'SELECT id, file_name, uploaded_at FROM reports WHERE booking_id = $1 AND is_active = TRUE',
+      `SELECT id, file_name, file_url, file_mime, report_type, version, uploaded_at
+       FROM reports WHERE booking_id = $1 AND is_active = TRUE ORDER BY version DESC`,
       [req.params.id],
     );
     res.json({ data: { ...bookingRes.rows[0], items: items.rows, reports: reports.rows } });
@@ -409,19 +641,1130 @@ router.post('/webhooks/razorpay', async (req, res, next) => {
   }
 });
 
-// ─── Admin (minimal stub — full CRUD added in M2/M3) ────────────────────────
+// ─── Admin: service_categories (Pathology / Radiology / Health Packages …) ─
 
-router.get('/admin/bookings', requireAuth, requireRole('admin', 'super_admin'), async (_req, res, next) => {
+const categoryCreateSchema = z.object({
+  name: z.string().trim().min(2).max(150),
+  slug: z.string().trim().min(2).max(150).regex(/^[a-z0-9-]+$/).optional(),
+  icon_url: z.string().max(500).nullable().optional(),
+  banner_url: z.string().max(500).nullable().optional(),
+  display_order: z.number().int().min(0).optional(),
+  is_active: z.boolean().optional(),
+});
+const categoryUpdateSchema = categoryCreateSchema.partial();
+
+router.get('/admin/service-categories', requireAuth, requireRole('admin', 'super_admin'), async (_req, res, next) => {
   try {
     const result = await query(
-      `SELECT id, booking_code, booking_type, booking_origin, visit_type,
-              scheduled_date, scheduled_start_time, total_amount, advance_amount,
-              booking_status, payment_status, collection_status, patient_snapshot, doctor_user_id
-       FROM bookings
-       ORDER BY scheduled_date DESC, scheduled_start_time DESC
-       LIMIT 200`,
+      `SELECT c.id, c.name, c.slug, c.icon_url, c.banner_url,
+              c.display_order, c.is_active, c.created_at, c.updated_at,
+              (SELECT COUNT(*) FROM services WHERE category_id = c.id AND is_active = TRUE)::int AS services_count
+       FROM service_categories c
+       ORDER BY c.display_order, c.name`,
     );
     res.json({ data: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/admin/service-categories', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = categoryCreateSchema.parse(req.body);
+    const slug = data.slug ?? slugify(data.name);
+    if (!slug) {
+      throw new HttpError(400, 'Could not derive a slug from the name', 'BAD_REQUEST');
+    }
+    const dup = await query<{ name: string; slug: string }>(
+      `SELECT name, slug FROM service_categories WHERE name = $1 OR slug = $2`,
+      [data.name, slug],
+    );
+    if (dup.rows.length > 0) {
+      const row = dup.rows[0];
+      throw new HttpError(
+        409,
+        row.name === data.name
+          ? `A category named "${data.name}" already exists.`
+          : `A category with slug "${slug}" already exists.`,
+        'DUPLICATE',
+      );
+    }
+    const result = await query<{ id: number }>(
+      `INSERT INTO service_categories (name, slug, icon_url, banner_url, display_order, is_active)
+       VALUES ($1, $2, $3, $4, COALESCE($5, 0), COALESCE($6, TRUE))
+       RETURNING id`,
+      [
+        data.name,
+        slug,
+        data.icon_url ?? null,
+        data.banner_url ?? null,
+        data.display_order ?? null,
+        data.is_active ?? null,
+      ],
+    );
+    res.status(201).json({ data: { id: result.rows[0].id, slug } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/admin/service-categories/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = categoryUpdateSchema.parse(req.body);
+    const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+    if (entries.length === 0) {
+      res.json({ data: { updated: false } });
+      return;
+    }
+    const set = entries.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+    const values = entries.map(([, v]) => v);
+    const result = await query<{ id: number }>(
+      `UPDATE service_categories SET ${set}, updated_at = NOW() WHERE id = $1 RETURNING id`,
+      [req.params.id, ...values],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Category not found', 'NOT_FOUND');
+    }
+    res.json({ data: { updated: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/admin/service-categories/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    // Soft delete: services.category_id FK is ON DELETE RESTRICT, so hard-delete
+    // fails the moment any service points at this category. is_active=false is
+    // safe — services keep their category label but the category is hidden.
+    const result = await query<{ id: number }>(
+      `UPDATE service_categories SET is_active = FALSE, updated_at = NOW()
+       WHERE id = $1 RETURNING id`,
+      [req.params.id],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Category not found', 'NOT_FOUND');
+    }
+    res.json({ data: { deleted: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Admin: services (tests + packages catalog) ───────────────────────────
+
+const serviceCreateSchema = z.object({
+  name: z.string().trim().min(2).max(255),
+  slug: z.string().trim().min(2).max(255).regex(/^[a-z0-9-]+$/).optional(),
+  test_key: z.string().trim().max(255).nullable().optional(),
+  category_id: z.number().int().positive(),
+  price: z.number().nonnegative(),
+  short_description: z.string().max(500).nullable().optional(),
+  full_details: z.string().max(10000).nullable().optional(),
+  prep_instructions: z.string().max(5000).nullable().optional(),
+  sample_type: z.string().max(100).nullable().optional(),
+  report_turnaround_hours: z.number().int().nonnegative().nullable().optional(),
+  image_url: z.string().max(500).nullable().optional(),
+  is_package: z.boolean().optional(),
+  package_service_ids: z.array(z.number().int().positive()).nullable().optional(),
+  package_discount_percent: z.number().min(0).max(100).nullable().optional(),
+  is_active: z.boolean().optional(),
+});
+
+const serviceUpdateSchema = serviceCreateSchema.partial();
+
+router.get('/admin/services', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const filters = z
+      .object({
+        q: z.string().optional(),
+        category_id: z.coerce.number().int().positive().optional(),
+        is_active: z.enum(['true', 'false']).optional(),
+        is_package: z.enum(['true', 'false']).optional(),
+      })
+      .parse(req.query);
+
+    const wheres: string[] = [];
+    const params: unknown[] = [];
+    if (filters.category_id) {
+      params.push(filters.category_id);
+      wheres.push(`s.category_id = $${params.length}`);
+    }
+    if (filters.is_active) {
+      params.push(filters.is_active === 'true');
+      wheres.push(`s.is_active = $${params.length}`);
+    }
+    if (filters.is_package) {
+      params.push(filters.is_package === 'true');
+      wheres.push(`s.is_package = $${params.length}`);
+    }
+    if (filters.q) {
+      params.push(`%${filters.q}%`);
+      wheres.push(`s.name ILIKE $${params.length}`);
+    }
+    const whereSql = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
+
+    const result = await query(
+      `SELECT s.id, s.name, s.slug, s.test_key, s.category_id, s.price,
+              s.short_description, s.sample_type, s.report_turnaround_hours,
+              s.image_url, s.is_package, s.package_discount_percent, s.is_active,
+              c.name AS category_name, c.slug AS category_slug
+       FROM services s
+       JOIN service_categories c ON c.id = s.category_id
+       ${whereSql}
+       ORDER BY c.display_order, s.name
+       LIMIT 1000`,
+      params,
+    );
+    res.json({ data: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/admin/services/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT s.*, c.name AS category_name, c.slug AS category_slug
+       FROM services s
+       JOIN service_categories c ON c.id = s.category_id
+       WHERE s.id = $1`,
+      [req.params.id],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Service not found', 'NOT_FOUND');
+    }
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/admin/services', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = serviceCreateSchema.parse(req.body);
+    const slug = data.slug ?? slugify(data.name);
+    if (!slug) {
+      throw new HttpError(400, 'Could not derive a slug from the name', 'BAD_REQUEST');
+    }
+
+    // Confirm the category exists (FK is ON DELETE RESTRICT — better message here).
+    const cat = await query<{ id: number }>(
+      `SELECT id FROM service_categories WHERE id = $1 AND is_active = TRUE`,
+      [data.category_id],
+    );
+    if (cat.rows.length === 0) {
+      throw new HttpError(400, 'Selected category does not exist or is inactive', 'BAD_REQUEST');
+    }
+
+    // Friendly duplicate check on slug + test_key (both UNIQUE).
+    const dup = await query<{ slug: string; test_key: string | null }>(
+      `SELECT slug, test_key FROM services
+       WHERE slug = $1 OR (test_key IS NOT NULL AND $2 IS NOT NULL AND test_key = $2)`,
+      [slug, data.test_key ?? null],
+    );
+    if (dup.rows.length > 0) {
+      const row = dup.rows[0];
+      throw new HttpError(
+        409,
+        row.slug === slug
+          ? `A service with slug "${slug}" already exists.`
+          : `A service with test key "${data.test_key}" already exists.`,
+        'DUPLICATE',
+      );
+    }
+
+    // Package consistency: services_package_consistency_chk requires
+    // package_service_ids to be a JSON array whenever is_package = TRUE.
+    const isPackage = data.is_package ?? false;
+    const packageIds = isPackage ? (data.package_service_ids ?? []) : null;
+
+    const result = await query<{ id: number }>(
+      `INSERT INTO services
+         (category_id, name, slug, test_key, price, short_description, full_details,
+          prep_instructions, sample_type, report_turnaround_hours, image_url,
+          is_package, package_service_ids, package_discount_percent, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15, TRUE))
+       RETURNING id`,
+      [
+        data.category_id,
+        data.name,
+        slug,
+        data.test_key ?? null,
+        data.price,
+        data.short_description ?? null,
+        data.full_details ?? null,
+        data.prep_instructions ?? null,
+        data.sample_type ?? null,
+        data.report_turnaround_hours ?? null,
+        data.image_url ?? null,
+        isPackage,
+        packageIds ? JSON.stringify(packageIds) : null,
+        data.package_discount_percent ?? null,
+        data.is_active ?? null,
+      ],
+    );
+    res.status(201).json({ data: { id: result.rows[0].id, slug } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/admin/services/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = serviceUpdateSchema.parse(req.body);
+    const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+    if (entries.length === 0) {
+      res.json({ data: { updated: false } });
+      return;
+    }
+    const set = entries
+      .map(([k], i) => `${k} = $${i + 2}`)
+      .join(', ');
+    const values = entries.map(([k, v]) =>
+      k === 'package_service_ids' && v !== null ? JSON.stringify(v) : v,
+    );
+    const result = await query<{ id: number }>(
+      `UPDATE services SET ${set}, updated_at = NOW() WHERE id = $1 RETURNING id`,
+      [req.params.id, ...values],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Service not found', 'NOT_FOUND');
+    }
+    res.json({ data: { updated: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/admin/services/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    // Soft delete: FK from booking_items.service_id is ON DELETE RESTRICT, so
+    // hard-delete would fail once the service has been used. is_active=false
+    // hides it from the public catalog and the booking flow.
+    const result = await query<{ id: number }>(
+      `UPDATE services SET is_active = FALSE, updated_at = NOW()
+       WHERE id = $1 RETURNING id`,
+      [req.params.id],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Service not found', 'NOT_FOUND');
+    }
+    res.json({ data: { deleted: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Admin: departments (clinical departments catalog) ────────────────────
+
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 150);
+}
+
+const departmentCreateSchema = z.object({
+  name: z.string().trim().min(2).max(150),
+  slug: z.string().trim().min(2).max(150).regex(/^[a-z0-9-]+$/).optional(),
+  description: z.string().max(2000).nullable().optional(),
+  icon_url: z.string().max(500).nullable().optional(),
+  banner_url: z.string().max(500).nullable().optional(),
+  display_order: z.number().int().min(0).optional(),
+  is_active: z.boolean().optional(),
+});
+
+const departmentUpdateSchema = departmentCreateSchema.partial();
+
+router.get('/admin/departments', requireAuth, requireRole('admin', 'super_admin'), async (_req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT d.id, d.name, d.slug, d.description, d.icon_url, d.banner_url,
+              d.display_order, d.is_active, d.created_at, d.updated_at,
+              (SELECT COUNT(*) FROM users WHERE department_id = d.id AND role = 'doctor' AND is_active = TRUE)::int AS doctors_count
+       FROM departments d
+       ORDER BY d.display_order, d.name`,
+    );
+    res.json({ data: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/admin/departments', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = departmentCreateSchema.parse(req.body);
+    const slug = data.slug ?? slugify(data.name);
+    if (!slug) {
+      throw new HttpError(400, 'Could not derive a slug from the name', 'BAD_REQUEST');
+    }
+
+    // Friendly pre-check — slug + name are both UNIQUE.
+    const dup = await query<{ name: string; slug: string }>(
+      `SELECT name, slug FROM departments WHERE name = $1 OR slug = $2`,
+      [data.name, slug],
+    );
+    if (dup.rows.length > 0) {
+      const row = dup.rows[0];
+      throw new HttpError(
+        409,
+        row.name === data.name
+          ? `A department named "${data.name}" already exists.`
+          : `A department with slug "${slug}" already exists.`,
+        'DUPLICATE',
+      );
+    }
+
+    const result = await query<{ id: number }>(
+      `INSERT INTO departments (name, slug, description, icon_url, banner_url, display_order, is_active)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 0), COALESCE($7, TRUE))
+       RETURNING id`,
+      [
+        data.name,
+        slug,
+        data.description ?? null,
+        data.icon_url ?? null,
+        data.banner_url ?? null,
+        data.display_order ?? null,
+        data.is_active ?? null,
+      ],
+    );
+    res.status(201).json({ data: { id: result.rows[0].id, slug } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/admin/departments/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = departmentUpdateSchema.parse(req.body);
+    const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+    if (entries.length === 0) {
+      res.json({ data: { updated: false } });
+      return;
+    }
+    const set = entries.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+    const values = entries.map(([, v]) => v);
+    const result = await query<{ id: number }>(
+      `UPDATE departments SET ${set}, updated_at = NOW() WHERE id = $1 RETURNING id`,
+      [req.params.id, ...values],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Department not found', 'NOT_FOUND');
+    }
+    res.json({ data: { updated: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/admin/departments/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    // Soft delete — the FK from users.department_id is ON DELETE SET NULL,
+    // but is_active = FALSE keeps the row available for historical lookups
+    // and matches how every other admin "delete" works in this app.
+    const result = await query<{ id: number }>(
+      `UPDATE departments SET is_active = FALSE, updated_at = NOW()
+       WHERE id = $1 RETURNING id`,
+      [req.params.id],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Department not found', 'NOT_FOUND');
+    }
+    res.json({ data: { deleted: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Admin: doctors (catalog CRUD) ─────────────────────────────────────────
+
+// Shape of a single day in WeeklySchedule. NULL = day off.
+const dailyScheduleSchema = z
+  .object({
+    start: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
+    end: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
+    slot_minutes: z.number().int().min(5).max(240),
+    buffer_minutes: z.number().int().min(0).max(120).optional(),
+    lunch_start: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).nullable().optional(),
+    lunch_end: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).nullable().optional(),
+    max_bookings: z.number().int().positive().optional(),
+  })
+  .nullable();
+
+const weeklyScheduleSchema = z
+  .object({
+    sun: dailyScheduleSchema.optional(),
+    mon: dailyScheduleSchema.optional(),
+    tue: dailyScheduleSchema.optional(),
+    wed: dailyScheduleSchema.optional(),
+    thu: dailyScheduleSchema.optional(),
+    fri: dailyScheduleSchema.optional(),
+    sat: dailyScheduleSchema.optional(),
+  })
+  .nullable()
+  .optional();
+
+const centerInputSchema = z.object({
+  center_name: z.string().trim().min(1).max(150),
+  address: z.string().trim().min(1).max(500),
+  phone: z.string().trim().max(15).nullable().optional(),
+  map_link: z.string().trim().max(500).nullable().optional(),
+  city: z.string().trim().max(100).nullable().optional(),
+  pincode: z.string().trim().max(10).nullable().optional(),
+  consultation_fee_override: z.number().nonnegative().nullable().optional(),
+  schedule: weeklyScheduleSchema,
+  home_visit_schedule: weeklyScheduleSchema,
+  is_active: z.boolean().optional(),
+});
+
+const doctorCreateSchema = z.object({
+  first_name: z.string().trim().min(1).max(100),
+  last_name: z.string().trim().min(1).max(100),
+  email: z.string().email().nullable().optional(),
+  mobile: z
+    .string()
+    .trim()
+    .regex(/^[6-9]\d{9}$/)
+    .nullable()
+    .optional(),
+  speciality: z.string().trim().min(1).max(200),
+  department_id: z.number().int().positive().nullable().optional(),
+  qualifications: z.array(z.string().trim().min(1)).default([]),
+  consultation_fee: z.number().nonnegative(),
+  about: z.string().max(5000).nullable().optional(),
+  education_training: z.string().max(5000).nullable().optional(),
+  is_verified: z.boolean().default(false),
+  offers_home_visit: z.boolean().default(false),
+  is_active: z.boolean().default(true),
+  centers: z.array(centerInputSchema).default([]),
+});
+
+const doctorUpdateSchema = doctorCreateSchema.partial().omit({ centers: true });
+
+router.get('/admin/doctors', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const filters = z
+      .object({
+        q: z.string().optional(),
+        department_id: z.coerce.number().int().positive().optional(),
+        is_active: z.enum(['true', 'false']).optional(),
+      })
+      .parse(req.query);
+
+    const wheres: string[] = [`u.role = 'doctor'`];
+    const params: unknown[] = [];
+    if (filters.department_id) {
+      params.push(filters.department_id);
+      wheres.push(`u.department_id = $${params.length}`);
+    }
+    if (filters.is_active) {
+      params.push(filters.is_active === 'true');
+      wheres.push(`u.is_active = $${params.length}`);
+    }
+    if (filters.q) {
+      params.push(`%${filters.q}%`);
+      wheres.push(
+        `(u.first_name ILIKE $${params.length} OR u.last_name ILIKE $${params.length} OR u.speciality ILIKE $${params.length})`,
+      );
+    }
+
+    const result = await query(
+      `SELECT u.id, u.first_name, u.last_name, u.email, u.mobile,
+              u.speciality, u.qualifications, u.consultation_fee,
+              u.profile_photo_url, u.is_verified, u.is_active, u.offers_home_visit,
+              u.rating_avg, u.rating_count, u.updated_at,
+              u.department_id, d.name AS department_name, d.slug AS department_slug,
+              (SELECT COUNT(*) FROM doctor_centers WHERE doctor_user_id = u.id AND is_active = TRUE)::int AS centers_count
+       FROM users u
+       LEFT JOIN departments d ON d.id = u.department_id
+       WHERE ${wheres.join(' AND ')}
+       ORDER BY u.first_name, u.last_name
+       LIMIT 500`,
+      params,
+    );
+    res.json({ data: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/admin/doctors/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const docRes = await query(
+      `SELECT u.id, u.first_name, u.last_name, u.email, u.mobile,
+              u.speciality, u.qualifications, u.consultation_fee,
+              u.about, u.education_training,
+              u.profile_photo_url, u.is_verified, u.is_active, u.offers_home_visit,
+              u.rating_avg, u.rating_count, u.updated_at,
+              u.department_id, d.name AS department_name, d.slug AS department_slug
+       FROM users u
+       LEFT JOIN departments d ON d.id = u.department_id
+       WHERE u.id = $1 AND u.role = 'doctor'`,
+      [req.params.id],
+    );
+    if (docRes.rows.length === 0) {
+      throw new HttpError(404, 'Doctor not found', 'NOT_FOUND');
+    }
+    const centersRes = await query(
+      `SELECT id, doctor_user_id, center_name, address, phone, map_link,
+              city, pincode, consultation_fee_override, schedule, home_visit_schedule, is_active
+       FROM doctor_centers WHERE doctor_user_id = $1 ORDER BY id`,
+      [req.params.id],
+    );
+    res.json({ data: { ...docRes.rows[0], centers: centersRes.rows } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/admin/doctors', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = doctorCreateSchema.parse(req.body);
+
+    // Pre-check duplicates so the admin sees which field collides instead of
+    // a raw DB error. Matches the partial unique indexes on users.mobile
+    // (active rows only) and users.email.
+    if (data.mobile || data.email) {
+      const dupRes = await query<{ mobile: string | null; email: string | null }>(
+        `SELECT mobile, email FROM users
+         WHERE (mobile IS NOT NULL AND mobile = $1 AND is_active = TRUE)
+            OR (email IS NOT NULL AND email = $2)`,
+        [data.mobile ?? null, data.email ?? null],
+      );
+      if (dupRes.rows.length > 0) {
+        const row = dupRes.rows[0];
+        if (data.mobile && row.mobile === data.mobile) {
+          throw new HttpError(
+            409,
+            `Mobile ${data.mobile} is already in use by another user. Use a different number or leave it blank.`,
+            'DUPLICATE_MOBILE',
+          );
+        }
+        if (data.email && row.email?.toLowerCase() === data.email.toLowerCase()) {
+          throw new HttpError(
+            409,
+            `Email ${data.email} is already in use by another user. Use a different email or leave it blank.`,
+            'DUPLICATE_EMAIL',
+          );
+        }
+      }
+    }
+
+    const created = await transaction(async (client) => {
+      // Doctor users don't need to log in by default — is_login_enabled=FALSE
+      // satisfies the users_login_capability_chk constraint without a password.
+      const userRes = await client.query<{ id: string }>(
+        `INSERT INTO users (
+            role, first_name, last_name, email, mobile,
+            speciality, department_id, qualifications, consultation_fee,
+            about, education_training,
+            is_verified, offers_home_visit, is_active, is_login_enabled
+         ) VALUES (
+            'doctor', $1, $2, $3, $4,
+            $5, $6, $7, $8,
+            $9, $10,
+            $11, $12, $13, FALSE
+         ) RETURNING id`,
+        [
+          data.first_name,
+          data.last_name,
+          data.email ?? null,
+          data.mobile ?? null,
+          data.speciality,
+          data.department_id ?? null,
+          data.qualifications,
+          data.consultation_fee,
+          data.about ?? null,
+          data.education_training ?? null,
+          data.is_verified,
+          data.offers_home_visit,
+          data.is_active,
+        ],
+      );
+      const newId = userRes.rows[0].id;
+
+      for (const center of data.centers) {
+        await client.query(
+          `INSERT INTO doctor_centers
+             (doctor_user_id, center_name, address, phone, map_link, city, pincode,
+              consultation_fee_override, schedule, home_visit_schedule, is_active)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, TRUE))`,
+          [
+            newId,
+            center.center_name,
+            center.address,
+            center.phone ?? null,
+            center.map_link ?? null,
+            center.city ?? null,
+            center.pincode ?? null,
+            center.consultation_fee_override ?? null,
+            center.schedule ? JSON.stringify(center.schedule) : null,
+            center.home_visit_schedule ? JSON.stringify(center.home_visit_schedule) : null,
+            center.is_active ?? null,
+          ],
+        );
+      }
+      return { id: newId };
+    });
+    res.status(201).json({ data: created });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/admin/doctors/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = doctorUpdateSchema.parse(req.body);
+    const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+    if (entries.length === 0) {
+      res.json({ data: { updated: false } });
+      return;
+    }
+    // Quick existence check to return a clean 404
+    const exists = await query(`SELECT id FROM users WHERE id = $1 AND role = 'doctor'`, [
+      req.params.id,
+    ]);
+    if (exists.rows.length === 0) {
+      throw new HttpError(404, 'Doctor not found', 'NOT_FOUND');
+    }
+    const set = entries.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+    const values = entries.map(([, v]) => v);
+    await query(
+      `UPDATE users SET ${set}, updated_at = NOW() WHERE id = $1`,
+      [req.params.id, ...values],
+    );
+    res.json({ data: { updated: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/admin/doctors/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    // Soft delete: keep the row for historical bookings (FK is ON DELETE RESTRICT),
+    // just flip is_active so the public site and admin list hide them by default.
+    const result = await query(
+      `UPDATE users SET is_active = FALSE, updated_at = NOW()
+       WHERE id = $1 AND role = 'doctor' RETURNING id`,
+      [req.params.id],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Doctor not found', 'NOT_FOUND');
+    }
+    res.json({ data: { deleted: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/admin/doctors/:id/centers', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = centerInputSchema.parse(req.body);
+    const exists = await query(`SELECT id FROM users WHERE id = $1 AND role = 'doctor'`, [
+      req.params.id,
+    ]);
+    if (exists.rows.length === 0) {
+      throw new HttpError(404, 'Doctor not found', 'NOT_FOUND');
+    }
+    const result = await query<{ id: number }>(
+      `INSERT INTO doctor_centers
+         (doctor_user_id, center_name, address, phone, map_link, city, pincode,
+          consultation_fee_override, schedule, home_visit_schedule, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, TRUE))
+       RETURNING id`,
+      [
+        req.params.id,
+        data.center_name,
+        data.address,
+        data.phone ?? null,
+        data.map_link ?? null,
+        data.city ?? null,
+        data.pincode ?? null,
+        data.consultation_fee_override ?? null,
+        data.schedule ? JSON.stringify(data.schedule) : null,
+        data.home_visit_schedule ? JSON.stringify(data.home_visit_schedule) : null,
+        data.is_active ?? null,
+      ],
+    );
+    res.status(201).json({ data: { id: result.rows[0].id } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/admin/centers/:centerId', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const data = centerInputSchema.partial().parse(req.body);
+    const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+    if (entries.length === 0) {
+      res.json({ data: { updated: false } });
+      return;
+    }
+    // JSON columns need to be stringified before sending to pg
+    const set = entries
+      .map(([k], i) => `${k} = $${i + 2}`)
+      .join(', ');
+    const values = entries.map(([k, v]) =>
+      k === 'schedule' || k === 'home_visit_schedule'
+        ? v === null
+          ? null
+          : JSON.stringify(v)
+        : v,
+    );
+    const result = await query(
+      `UPDATE doctor_centers SET ${set}, updated_at = NOW() WHERE id = $1 RETURNING id`,
+      [req.params.centerId, ...values],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Center not found', 'NOT_FOUND');
+    }
+    res.json({ data: { updated: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/admin/centers/:centerId', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const result = await query(
+      `UPDATE doctor_centers SET is_active = FALSE, updated_at = NOW()
+       WHERE id = $1 RETURNING id`,
+      [req.params.centerId],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, 'Center not found', 'NOT_FOUND');
+    }
+    res.json({ data: { deleted: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Admin: bookings list + detail + status changes ────────────────────────
+
+router.get('/admin/bookings', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const filters = z
+      .object({
+        type: z.enum(['doctor_appointment', 'test_booking']).optional(),
+        origin: z.enum(['online', 'walk_in']).optional(),
+        status: z.string().optional(),
+        q: z.string().optional(),
+      })
+      .parse(req.query);
+
+    const wheres: string[] = [];
+    const params: unknown[] = [];
+    if (filters.type) {
+      params.push(filters.type);
+      wheres.push(`booking_type = $${params.length}`);
+    }
+    if (filters.origin) {
+      params.push(filters.origin);
+      wheres.push(`booking_origin = $${params.length}`);
+    }
+    if (filters.status) {
+      params.push(filters.status);
+      wheres.push(`booking_status = $${params.length}`);
+    }
+    if (filters.q) {
+      params.push(`%${filters.q}%`);
+      wheres.push(
+        `(booking_code ILIKE $${params.length} OR patient_snapshot->>'first_name' ILIKE $${params.length} OR patient_snapshot->>'last_name' ILIKE $${params.length} OR patient_snapshot->>'mobile' ILIKE $${params.length})`,
+      );
+    }
+    const whereSql = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
+
+    const result = await query(
+      `SELECT b.id, b.booking_code, b.booking_type, b.booking_origin, b.visit_type,
+              b.scheduled_date, b.scheduled_start_time, b.total_amount, b.advance_amount,
+              b.balance_amount, b.booking_status, b.payment_status, b.collection_status,
+              b.patient_snapshot, b.doctor_user_id,
+              -- Pull the doctor's display name when present
+              (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = b.doctor_user_id) AS doctor_name,
+              -- Compact list of item names for the table
+              (SELECT string_agg(item_name, ', ' ORDER BY id) FROM booking_items WHERE booking_id = b.id) AS items_summary
+       FROM bookings b
+       ${whereSql}
+       ORDER BY b.created_at DESC
+       LIMIT 200`,
+      params,
+    );
+    res.json({ data: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/admin/bookings/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const bookingRes = await query(
+      `SELECT b.*,
+              (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = b.doctor_user_id) AS doctor_name,
+              (SELECT speciality FROM users WHERE id = b.doctor_user_id) AS doctor_speciality,
+              (SELECT center_name FROM doctor_centers WHERE id = b.doctor_center_id) AS doctor_center
+       FROM bookings b WHERE b.id = $1`,
+      [req.params.id],
+    );
+    if (bookingRes.rows.length === 0) {
+      throw new HttpError(404, 'Booking not found', 'NOT_FOUND');
+    }
+    const items = await query(
+      `SELECT id, item_type, service_id, doctor_user_id, item_name, item_description,
+              quantity, unit_price, total_price
+       FROM booking_items WHERE booking_id = $1 ORDER BY id`,
+      [req.params.id],
+    );
+    const payments = await query(
+      `SELECT id, payment_source, razorpay_order_id, razorpay_payment_id, amount, currency,
+              payment_method, payment_status, payment_type, captured_at, refunded_amount,
+              refund_reason, refunded_at, notes, created_at
+       FROM payments WHERE booking_id = $1 ORDER BY created_at`,
+      [req.params.id],
+    );
+    const reports = await query(
+      `SELECT id, file_name, file_url, file_size_bytes, file_mime, report_type,
+              version, is_active, uploaded_at
+       FROM reports WHERE booking_id = $1 AND is_active = TRUE ORDER BY version DESC`,
+      [req.params.id],
+    );
+    res.json({
+      data: { ...bookingRes.rows[0], items: items.rows, payments: payments.rows, reports: reports.rows },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Admin: dashboard + analytics aggregations ────────────────────────────
+
+router.get('/admin/dashboard', requireAuth, requireRole('admin', 'super_admin'), async (_req, res, next) => {
+  try {
+    // Today and yesterday in Asia/Kolkata so the "today" boundary matches what
+    // the receptionist actually sees on the wall clock. We compute dates in JS
+    // to avoid timezone gymnastics in SQL.
+    const tz = 'Asia/Kolkata';
+    const fmtDate = (d: Date) =>
+      d.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+    const now = new Date();
+    const today = fmtDate(now);
+    const yesterday = fmtDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+    const weekAgo = fmtDate(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+
+    // KPI counts + revenue. Revenue is summed from captured/authorized payments
+    // (source of truth) — booking.advance_amount can be stale before the
+    // recompute trigger fires on offline payments, so payments table wins.
+    const kpiRes = await query<{
+      today_bookings: number;
+      today_revenue: string;
+      yesterday_bookings: number;
+      yesterday_revenue: string;
+      pending_reports: number;
+      new_patients_week: number;
+    }>(
+      `SELECT
+         (SELECT COUNT(*)::int FROM bookings WHERE scheduled_date = $1) AS today_bookings,
+         (SELECT COALESCE(SUM(p.amount - p.refunded_amount), 0)::numeric FROM payments p
+            JOIN bookings b ON b.id = p.booking_id
+            WHERE b.scheduled_date = $1
+              AND p.payment_status IN ('captured', 'authorized')) AS today_revenue,
+         (SELECT COUNT(*)::int FROM bookings WHERE scheduled_date = $2) AS yesterday_bookings,
+         (SELECT COALESCE(SUM(p.amount - p.refunded_amount), 0)::numeric FROM payments p
+            JOIN bookings b ON b.id = p.booking_id
+            WHERE b.scheduled_date = $2
+              AND p.payment_status IN ('captured', 'authorized')) AS yesterday_revenue,
+         (SELECT COUNT(*)::int FROM bookings b
+            WHERE b.booking_type = 'test_booking'
+              AND b.booking_status IN ('in_progress', 'completed')
+              AND NOT EXISTS (SELECT 1 FROM reports r WHERE r.booking_id = b.id AND r.is_active = TRUE)) AS pending_reports,
+         (SELECT COUNT(*)::int FROM users
+            WHERE role = 'patient' AND created_at >= $3::date) AS new_patients_week`,
+      [today, yesterday, weekAgo],
+    );
+    const kpi = kpiRes.rows[0];
+
+    // Today's schedule (first 10 rows) — includes both online + walk-in.
+    const scheduleRes = await query(
+      `SELECT b.id, b.booking_code, b.booking_type, b.booking_origin, b.visit_type,
+              b.scheduled_start_time, b.booking_status, b.payment_status,
+              b.patient_snapshot,
+              (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = b.doctor_user_id) AS doctor_name,
+              (SELECT string_agg(item_name, ', ' ORDER BY id) FROM booking_items WHERE booking_id = b.id) AS items_summary
+       FROM bookings b
+       WHERE b.scheduled_date = $1
+       ORDER BY b.scheduled_start_time NULLS LAST, b.created_at
+       LIMIT 10`,
+      [today],
+    );
+
+    res.json({
+      data: {
+        today,
+        kpis: {
+          today_bookings: kpi.today_bookings,
+          today_revenue: Number(kpi.today_revenue),
+          yesterday_bookings: kpi.yesterday_bookings,
+          yesterday_revenue: Number(kpi.yesterday_revenue),
+          pending_reports: kpi.pending_reports,
+          new_patients_week: kpi.new_patients_week,
+        },
+        schedule: scheduleRes.rows,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/admin/analytics', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const { days } = z
+      .object({ days: z.coerce.number().int().min(1).max(365).default(30) })
+      .parse(req.query);
+
+    const tz = 'Asia/Kolkata';
+    const fmtDate = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: tz });
+    const now = new Date();
+    const to = fmtDate(now);
+    const from = fmtDate(new Date(now.getTime() - (days - 1) * 24 * 60 * 60 * 1000));
+
+    // Single round-trip: parallelize all aggregations.
+    const [kpiRes, trendRes, topRes, byTypeRes, byOriginRes, byStatusRes, byMethodRes] =
+      await Promise.all([
+        query<{
+          bookings_count: number;
+          revenue: string;
+          online_count: number;
+          walk_in_count: number;
+          home_visits_count: number;
+          in_clinic_count: number;
+          new_patients_count: number;
+        }>(
+          `SELECT
+             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2) AS bookings_count,
+             (SELECT COALESCE(SUM(p.amount - p.refunded_amount), 0)::numeric FROM payments p
+                JOIN bookings b ON b.id = p.booking_id
+                WHERE b.created_at::date BETWEEN $1 AND $2
+                  AND p.payment_status IN ('captured', 'authorized')) AS revenue,
+             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND booking_origin = 'online') AS online_count,
+             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND booking_origin = 'walk_in') AS walk_in_count,
+             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND visit_type = 'home_visit') AS home_visits_count,
+             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND visit_type = 'in_clinic') AS in_clinic_count,
+             (SELECT COUNT(*)::int FROM users WHERE role = 'patient' AND created_at::date BETWEEN $1 AND $2) AS new_patients_count`,
+          [from, to],
+        ),
+        // Daily revenue + booking count for the trend line/bar chart.
+        // generate_series gives us a row per day even when there are no bookings,
+        // so the chart has no gaps.
+        query<{ d: string; revenue: string; bookings: number }>(
+          `SELECT g.d::text AS d,
+                  COALESCE(SUM(CASE WHEN p.payment_status IN ('captured','authorized')
+                                    THEN p.amount - p.refunded_amount ELSE 0 END), 0)::numeric AS revenue,
+                  COUNT(DISTINCT b.id)::int AS bookings
+           FROM generate_series($1::date, $2::date, '1 day'::interval) AS g(d)
+           LEFT JOIN bookings b ON b.created_at::date = g.d
+           LEFT JOIN payments p ON p.booking_id = b.id
+           GROUP BY g.d
+           ORDER BY g.d`,
+          [from, to],
+        ),
+        // Top services by booking volume (with revenue).
+        query<{ item_name: string; count: number; revenue: string }>(
+          `SELECT bi.item_name,
+                  COUNT(*)::int AS count,
+                  COALESCE(SUM(bi.total_price), 0)::numeric AS revenue
+           FROM booking_items bi
+           JOIN bookings b ON b.id = bi.booking_id
+           WHERE b.created_at::date BETWEEN $1 AND $2
+           GROUP BY bi.item_name
+           ORDER BY count DESC, revenue DESC
+           LIMIT 10`,
+          [from, to],
+        ),
+        query<{ booking_type: string; count: number; revenue: string }>(
+          `SELECT b.booking_type,
+                  COUNT(*)::int AS count,
+                  COALESCE(SUM(b.total_amount), 0)::numeric AS revenue
+           FROM bookings b
+           WHERE b.created_at::date BETWEEN $1 AND $2
+           GROUP BY b.booking_type`,
+          [from, to],
+        ),
+        query<{ booking_origin: string; count: number; revenue: string }>(
+          `SELECT b.booking_origin,
+                  COUNT(*)::int AS count,
+                  COALESCE(SUM(b.total_amount), 0)::numeric AS revenue
+           FROM bookings b
+           WHERE b.created_at::date BETWEEN $1 AND $2
+           GROUP BY b.booking_origin`,
+          [from, to],
+        ),
+        query<{ booking_status: string; count: number }>(
+          `SELECT booking_status, COUNT(*)::int AS count
+           FROM bookings
+           WHERE created_at::date BETWEEN $1 AND $2
+           GROUP BY booking_status
+           ORDER BY count DESC`,
+          [from, to],
+        ),
+        query<{ payment_method: string | null; count: number; amount: string }>(
+          `SELECT p.payment_method,
+                  COUNT(*)::int AS count,
+                  COALESCE(SUM(p.amount - p.refunded_amount), 0)::numeric AS amount
+           FROM payments p
+           JOIN bookings b ON b.id = p.booking_id
+           WHERE b.created_at::date BETWEEN $1 AND $2
+             AND p.payment_status IN ('captured', 'authorized')
+           GROUP BY p.payment_method
+           ORDER BY amount DESC`,
+          [from, to],
+        ),
+      ]);
+
+    const kpi = kpiRes.rows[0];
+    res.json({
+      data: {
+        range: { from, to, days },
+        kpis: {
+          bookings_count: kpi.bookings_count,
+          revenue: Number(kpi.revenue),
+          online_count: kpi.online_count,
+          walk_in_count: kpi.walk_in_count,
+          home_visits_count: kpi.home_visits_count,
+          in_clinic_count: kpi.in_clinic_count,
+          new_patients_count: kpi.new_patients_count,
+        },
+        revenue_trend: trendRes.rows.map((r) => ({
+          date: r.d,
+          revenue: Number(r.revenue),
+          bookings: r.bookings,
+        })),
+        top_services: topRes.rows.map((r) => ({
+          item_name: r.item_name,
+          count: r.count,
+          revenue: Number(r.revenue),
+        })),
+        by_type: byTypeRes.rows.map((r) => ({
+          key: r.booking_type,
+          count: r.count,
+          revenue: Number(r.revenue),
+        })),
+        by_origin: byOriginRes.rows.map((r) => ({
+          key: r.booking_origin,
+          count: r.count,
+          revenue: Number(r.revenue),
+        })),
+        by_status: byStatusRes.rows.map((r) => ({ key: r.booking_status, count: r.count })),
+        by_payment_method: byMethodRes.rows.map((r) => ({
+          key: r.payment_method ?? 'unknown',
+          count: r.count,
+          amount: Number(r.amount),
+        })),
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -451,5 +1794,314 @@ router.patch('/admin/bookings/:id/status', requireAuth, requireRole('admin', 'su
     next(err);
   }
 });
+
+// ─── Admin: booking lookup by code (used by report upload flow) ───────────
+// Distinct path (not `/admin/bookings/lookup`) because that would collide
+// with `/admin/bookings/:id` and Express would route 'lookup' as an id.
+
+router.get('/admin/booking-lookup', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const { code } = z
+      .object({ code: z.string().trim().min(3).max(30) })
+      .parse(req.query);
+    const result = await query(
+      `SELECT id, booking_code, booking_type, booking_origin, visit_type,
+              scheduled_date, scheduled_start_time, booking_status, payment_status,
+              patient_user_id, patient_snapshot,
+              (SELECT string_agg(item_name, ', ' ORDER BY id) FROM booking_items WHERE booking_id = bookings.id) AS items_summary,
+              (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = bookings.doctor_user_id) AS doctor_name
+       FROM bookings WHERE booking_code = $1`,
+      [code],
+    );
+    if (result.rows.length === 0) {
+      throw new HttpError(404, `No booking found for code ${code}`, 'NOT_FOUND');
+    }
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Admin: recently uploaded reports (cross-booking) ─────────────────────
+
+router.get('/admin/reports', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
+  try {
+    const filters = z
+      .object({
+        q: z.string().optional(),
+        limit: z.coerce.number().int().positive().max(500).optional(),
+      })
+      .parse(req.query);
+    const wheres: string[] = ['r.is_active = TRUE'];
+    const params: unknown[] = [];
+    if (filters.q) {
+      params.push(`%${filters.q}%`);
+      wheres.push(
+        `(b.booking_code ILIKE $${params.length} OR r.file_name ILIKE $${params.length} OR b.patient_snapshot->>'first_name' ILIKE $${params.length} OR b.patient_snapshot->>'last_name' ILIKE $${params.length} OR b.patient_snapshot->>'mobile' ILIKE $${params.length})`,
+      );
+    }
+    params.push(filters.limit ?? 100);
+    const limitParam = params.length;
+    const result = await query(
+      `SELECT r.id, r.file_name, r.file_url, r.file_mime, r.file_size_bytes,
+              r.report_type, r.version, r.uploaded_at,
+              b.id AS booking_id, b.booking_code, b.booking_type,
+              b.patient_snapshot
+       FROM reports r
+       JOIN bookings b ON b.id = r.booking_id
+       WHERE ${wheres.join(' AND ')}
+       ORDER BY r.uploaded_at DESC
+       LIMIT $${limitParam}`,
+      params,
+    );
+    res.json({ data: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Admin: walk-in bill creation ───────────────────────────────────────────
+
+const walkInItemSchema = z.union([
+  z.object({
+    service_id: z.number().int().positive(),
+    quantity: z.number().int().positive().default(1),
+  }),
+  z.object({
+    item_name: z.string().min(1).max(255),
+    unit_price: z.number().nonnegative(),
+    quantity: z.number().int().positive().default(1),
+    item_type: z.literal('custom'),
+  }),
+]);
+
+// Form inputs send '' (empty string) for optional fields that weren't filled.
+// Convert those to undefined so zod's .optional() treats them as absent.
+const blankToUndef = (v: unknown) =>
+  typeof v === 'string' && v.trim() === '' ? undefined : v;
+const optStr = (max: number) =>
+  z.preprocess(blankToUndef, z.string().max(max).optional());
+const optEmail = z.preprocess(blankToUndef, z.string().email('Invalid email').optional());
+const optAge = z.preprocess(
+  blankToUndef,
+  z.coerce.number().int().positive().max(200).optional(),
+);
+
+const walkInBillSchema = z.object({
+  patient: z.object({
+    first_name: z.string().trim().min(1, 'Patient first name is required').max(100),
+    last_name: optStr(100),
+    mobile: z
+      .string()
+      .trim()
+      .regex(/^\d{10,15}$/, 'Mobile must be 10–15 digits'),
+    age: optAge,
+    gender: z.preprocess(blankToUndef, z.enum(['M', 'F', 'O']).optional()),
+    email: optEmail,
+  }),
+  items: z.array(walkInItemSchema).min(1, 'Add at least one item'),
+  payment: z
+    .object({
+      method: z.enum(['cash', 'upi_qr_offline', 'card_swipe', 'cheque']),
+      amount: z.number().nonnegative(),
+      notes: optStr(500),
+    })
+    .optional(),
+  patient_user_id: z.preprocess(blankToUndef, z.string().uuid().optional()),
+});
+
+router.post(
+  '/admin/walk-in-bills',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const data = walkInBillSchema.parse(req.body);
+      const today = new Date().toISOString().slice(0, 10);
+      const nowTime = new Date().toTimeString().slice(0, 8);
+
+      const created = await transaction(async (client) => {
+        // Resolve catalog items so we always store name + price snapshots
+        const catalogIds = data.items
+          .map((i) => ('service_id' in i ? i.service_id : null))
+          .filter((id): id is number => id !== null);
+
+        const catalog =
+          catalogIds.length > 0
+            ? await client.query<{ id: number; name: string; price: number; is_package: boolean }>(
+                `SELECT id, name, price, is_package FROM services WHERE id = ANY($1::bigint[])`,
+                [catalogIds],
+              )
+            : { rows: [] as Array<{ id: number; name: string; price: number; is_package: boolean }> };
+
+        const normalised = data.items.map((i) => {
+          if ('service_id' in i) {
+            const svc = catalog.rows.find((s) => s.id === i.service_id);
+            if (!svc) throw new HttpError(404, `Service ${i.service_id} not found`, 'NOT_FOUND');
+            return {
+              item_type: svc.is_package ? 'package' : ('test' as const),
+              service_id: svc.id,
+              item_name: svc.name,
+              unit_price: Number(svc.price),
+              quantity: i.quantity,
+            };
+          }
+          return {
+            item_type: 'custom' as const,
+            service_id: null,
+            item_name: i.item_name,
+            unit_price: i.unit_price,
+            quantity: i.quantity,
+          };
+        });
+
+        const subtotal = normalised.reduce((s, i) => s + i.unit_price * i.quantity, 0);
+        const total = subtotal;
+        const paid = data.payment?.amount ?? 0;
+        const balance = Math.max(0, total - paid);
+        const paymentStatus = paid <= 0 ? 'pending' : paid >= total ? 'paid' : 'partial';
+        const bookingStatus = paid >= total ? 'completed' : 'in_progress';
+
+        // 1. bookings
+        const bookingRes = await client.query<{ id: number; booking_code: string }>(
+          `INSERT INTO bookings (
+             patient_user_id, booking_type, booking_origin, visit_type,
+             scheduled_date, scheduled_start_time,
+             patient_snapshot,
+             subtotal_amount, total_amount, advance_amount, balance_amount,
+             booking_status, payment_status, collection_status,
+             created_by_user_id
+           ) VALUES (
+             $1, 'test_booking', 'walk_in', 'in_clinic',
+             $2, $3, $4,
+             $5, $5, $6, $7,
+             $8, $9, 'not_required',
+             $10
+           ) RETURNING id, booking_code`,
+          [
+            data.patient_user_id ?? null,
+            today,
+            nowTime,
+            JSON.stringify(data.patient),
+            subtotal,
+            paid,
+            balance,
+            bookingStatus,
+            paymentStatus,
+            req.user!.id,
+          ],
+        );
+        const booking = bookingRes.rows[0];
+
+        // 2. booking_items
+        for (const item of normalised) {
+          await client.query(
+            `INSERT INTO booking_items
+               (booking_id, item_type, service_id, item_name, quantity, unit_price, total_price)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              booking.id,
+              item.item_type,
+              item.service_id,
+              item.item_name,
+              item.quantity,
+              item.unit_price,
+              item.unit_price * item.quantity,
+            ],
+          );
+        }
+
+        // 3. payments (only if money changed hands)
+        if (data.payment && data.payment.amount > 0) {
+          await client.query(
+            `INSERT INTO payments
+               (booking_id, payment_source, amount, currency, payment_method,
+                payment_status, payment_type, collected_by_user_id, captured_at, notes)
+             VALUES ($1, 'offline', $2, 'INR', $3, 'captured', $4, $5, NOW(), $6)`,
+            [
+              booking.id,
+              data.payment.amount,
+              data.payment.method,
+              paid >= total ? 'full' : 'advance',
+              req.user!.id,
+              data.payment.notes ?? null,
+            ],
+          );
+        }
+
+        // 4. invoices (sequence trigger generates invoice_number)
+        await client.query(
+          `INSERT INTO invoices (booking_id, subtotal_amount, tax_amount, discount_amount, total_amount, invoice_number)
+           VALUES ($1, $2, 0, 0, $2, '')`,
+          [booking.id, total],
+        );
+
+        return booking;
+      });
+      res.status(201).json({ data: created });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Admin: record an offline payment against an existing booking ──────────
+
+const recordPaymentSchema = z.object({
+  method: z.enum(['cash', 'upi_qr_offline', 'card_swipe', 'cheque']),
+  amount: z.number().positive(),
+  notes: z.string().max(500).optional(),
+  payment_type: z.enum(['advance', 'balance', 'full']).default('balance'),
+});
+
+router.post(
+  '/admin/bookings/:id/payments',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const data = recordPaymentSchema.parse(req.body);
+      const bookingId = req.params.id;
+
+      const updated = await transaction(async (client) => {
+        const bookingRes = await client.query<{ total_amount: number; balance_amount: number }>(
+          `SELECT total_amount, balance_amount FROM bookings WHERE id = $1 FOR UPDATE`,
+          [bookingId],
+        );
+        if (bookingRes.rows.length === 0) {
+          throw new HttpError(404, 'Booking not found', 'NOT_FOUND');
+        }
+        await client.query(
+          `INSERT INTO payments
+             (booking_id, payment_source, amount, currency, payment_method,
+              payment_status, payment_type, collected_by_user_id, captured_at, notes)
+           VALUES ($1, 'offline', $2, 'INR', $3, 'captured', $4, $5, NOW(), $6)`,
+          [bookingId, data.amount, data.method, data.payment_type, req.user!.id, data.notes ?? null],
+        );
+        // Recompute paid + balance from the payments table (source of truth)
+        const summed = await client.query<{ paid: number }>(
+          `SELECT COALESCE(SUM(amount - refunded_amount), 0)::numeric AS paid
+           FROM payments
+           WHERE booking_id = $1 AND payment_status IN ('captured', 'authorized')`,
+          [bookingId],
+        );
+        const paid = Number(summed.rows[0].paid);
+        const total = Number(bookingRes.rows[0].total_amount);
+        const balance = Math.max(0, total - paid);
+        const newStatus = paid <= 0 ? 'pending' : paid >= total ? 'paid' : 'partial';
+        await client.query(
+          `UPDATE bookings
+             SET advance_amount = $1, balance_amount = $2, payment_status = $3, updated_at = NOW()
+           WHERE id = $4`,
+          [paid, balance, newStatus, bookingId],
+        );
+        return { paid, balance, payment_status: newStatus };
+      });
+      res.status(201).json({ data: updated });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 export default router;

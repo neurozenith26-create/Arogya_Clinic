@@ -80,9 +80,10 @@ router.get('/doctors', async (req, res, next) => {
 
     let sql = `
       SELECT u.id, u.first_name, u.last_name, u.profile_photo_url,
+             ('Dr. ' || u.first_name || ' ' || COALESCE(u.last_name, '')) AS display_name,
              u.speciality, u.qualifications, u.consultation_fee,
              u.about, u.is_verified, u.offers_home_visit,
-             u.rating_avg, u.rating_count,
+             u.rating_avg, u.rating_count, u.updated_at,
              d.id AS department_id, d.name AS department_name, d.slug AS department_slug
       FROM users u
       LEFT JOIN departments d ON d.id = u.department_id
@@ -110,9 +111,10 @@ router.get('/doctors/:id', async (req, res, next) => {
   try {
     const doctorResult = await query(
       `SELECT u.id, u.first_name, u.last_name, u.profile_photo_url,
+              ('Dr. ' || u.first_name || ' ' || COALESCE(u.last_name, '')) AS display_name,
               u.speciality, u.qualifications, u.consultation_fee,
               u.about, u.education_training, u.is_verified, u.offers_home_visit,
-              u.rating_avg, u.rating_count,
+              u.rating_avg, u.rating_count, u.updated_at,
               d.id AS department_id, d.name AS department_name, d.slug AS department_slug
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id

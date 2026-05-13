@@ -2,19 +2,21 @@ import { Link } from 'react-router-dom';
 import { Calendar, FileText, FlaskConical, Heart } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
-import { Badge } from '../../components/ui/badge';
+import { Skeleton } from '../../components/ui/skeleton';
 import { useAuthStore } from '../../stores/authStore';
-import { mockBookings } from '../../lib/mockPhase2';
+import { useMyBookings } from '../../hooks/queries';
+import { BookingStatusBadge } from '../../components/shared/BookingStatusBadge';
 import { formatCurrencyINR } from '../../lib/utils';
 
 export default function DashboardOverviewPage() {
   const user = useAuthStore((s) => s.user);
-  const myBookings = mockBookings.filter((b) => b.patient_user_id === user?.id);
-  const upcoming = myBookings
+  const { data: bookings = [], isLoading } = useMyBookings();
+
+  const upcoming = bookings
     .filter((b) => ['confirmed', 'in_progress', 'pending_payment'].includes(b.booking_status))
     .slice(0, 3);
-  const totalReports = myBookings.reduce((sum, b) => sum + (b.reports?.length ?? 0), 0);
-  const completed = myBookings.filter((b) => b.booking_status === 'completed').length;
+  const totalReports = bookings.reduce((sum, b) => sum + (b.reports_count ?? 0), 0);
+  const completed = bookings.filter((b) => b.booking_status === 'completed').length;
 
   return (
     <div className="space-y-6">
@@ -80,7 +82,13 @@ export default function DashboardOverviewPage() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
-          {upcoming.length === 0 ? (
+          {isLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <Skeleton key={i} className="h-20 w-full" />
+              ))}
+            </div>
+          ) : upcoming.length === 0 ? (
             <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
               No upcoming bookings.{' '}
               <Link to="/services" className="text-primary hover:underline">
@@ -99,27 +107,23 @@ export default function DashboardOverviewPage() {
                 to={`/dashboard/bookings/${b.id}`}
                 className="block rounded-md border p-4 transition-colors hover:bg-accent/40"
               >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="font-medium">
-                      {b.doctor_name ?? b.items[0]?.item_name}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">
+                      {b.doctor_name ?? b.items_summary ?? 'Booking'}
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      {b.scheduled_date} at {b.scheduled_start_time} ·{' '}
+                      {b.scheduled_date} at {b.scheduled_start_time?.slice(0, 5)} ·{' '}
                       {b.visit_type === 'home_visit' ? 'Home Collection' : 'In-Clinic'}
                     </div>
-                    <div className="mt-1 text-xs font-mono text-muted-foreground">
+                    <div className="mt-1 font-mono text-xs text-muted-foreground">
                       {b.booking_code}
                     </div>
                   </div>
                   <div className="text-right">
-                    <Badge
-                      variant={b.booking_status === 'confirmed' ? 'success' : 'secondary'}
-                    >
-                      {b.booking_status.replace('_', ' ')}
-                    </Badge>
+                    <BookingStatusBadge status={b.booking_status} />
                     <div className="mt-1 text-sm font-semibold text-primary">
-                      {formatCurrencyINR(b.total_amount)}
+                      {formatCurrencyINR(Number(b.total_amount))}
                     </div>
                   </div>
                 </div>

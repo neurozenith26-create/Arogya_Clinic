@@ -4,8 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Badge } from '../../components/ui/badge';
+import { Skeleton } from '../../components/ui/skeleton';
 import { DataTable, type Column } from '../../components/admin/DataTable';
-import { mockBookings, type MockBooking } from '../../lib/mockPhase2';
+import { useAdminBookings, type AdminBookingRow } from '../../hooks/queries';
+import { BookingStatusSelect } from '../../components/admin/BookingStatusSelect';
 import { formatCurrencyINR } from '../../lib/utils';
 
 export default function AdminBookingsPage() {
@@ -15,23 +17,14 @@ export default function AdminBookingsPage() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterOrigin, setFilterOrigin] = useState<'all' | 'online' | 'walk_in'>('all');
 
-  const filtered = mockBookings.filter((b) => {
-    if (filterType !== 'all' && b.booking_type !== filterType) return false;
-    if (filterStatus !== 'all' && b.booking_status !== filterStatus) return false;
-    if (filterOrigin !== 'all' && b.booking_origin !== filterOrigin) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const matches =
-        b.booking_code.toLowerCase().includes(q) ||
-        b.patient_snapshot.first_name.toLowerCase().includes(q) ||
-        b.patient_snapshot.last_name.toLowerCase().includes(q) ||
-        b.patient_snapshot.mobile.includes(q);
-      if (!matches) return false;
-    }
-    return true;
+  const { data: bookings = [], isLoading } = useAdminBookings({
+    type: filterType === 'all' ? undefined : filterType,
+    origin: filterOrigin === 'all' ? undefined : filterOrigin,
+    status: filterStatus === 'all' ? undefined : filterStatus,
+    q: search || undefined,
   });
 
-  const columns: Column<MockBooking>[] = [
+  const columns: Column<AdminBookingRow>[] = [
     {
       key: 'code',
       header: 'Booking',
@@ -47,14 +40,16 @@ export default function AdminBookingsPage() {
     {
       key: 'patient',
       header: 'Patient',
-      render: (b) => (
-        <div>
-          <div className="font-medium">
-            {b.patient_snapshot.first_name} {b.patient_snapshot.last_name}
+      render: (b) => {
+        const snap = b.patient_snapshot ?? {};
+        const name = [snap.first_name, snap.last_name].filter(Boolean).join(' ') || '—';
+        return (
+          <div>
+            <div className="font-medium">{name}</div>
+            {snap.mobile && <div className="text-xs text-muted-foreground">{snap.mobile}</div>}
           </div>
-          <div className="text-xs text-muted-foreground">{b.patient_snapshot.mobile}</div>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: 'service',
@@ -63,8 +58,8 @@ export default function AdminBookingsPage() {
         <div className="max-w-xs">
           <div className="truncate">
             {b.booking_type === 'doctor_appointment'
-              ? b.doctor_name
-              : b.items.map((i) => i.item_name).join(', ')}
+              ? b.doctor_name ?? '—'
+              : b.items_summary ?? '—'}
           </div>
           <div className="text-xs text-muted-foreground">
             {b.visit_type === 'home_visit' ? 'Home Collection' : 'In-Clinic'}
@@ -77,8 +72,10 @@ export default function AdminBookingsPage() {
       header: 'Schedule',
       render: (b) => (
         <div className="text-sm">
-          {b.scheduled_date}
-          <div className="text-xs text-muted-foreground">{b.scheduled_start_time}</div>
+          {b.scheduled_date ?? '—'}
+          <div className="text-xs text-muted-foreground">
+            {b.scheduled_start_time?.slice(0, 5) ?? ''}
+          </div>
         </div>
       ),
     },
@@ -86,17 +83,11 @@ export default function AdminBookingsPage() {
       key: 'status',
       header: 'Status',
       render: (b) => (
-        <Badge
-          variant={
-            b.booking_status === 'confirmed' || b.booking_status === 'completed'
-              ? 'success'
-              : b.booking_status === 'cancelled'
-                ? 'destructive'
-                : 'secondary'
-          }
-        >
-          {b.booking_status.replace('_', ' ')}
-        </Badge>
+        <BookingStatusSelect
+          bookingId={b.id}
+          value={b.booking_status}
+          variant="compact"
+        />
       ),
     },
     {
@@ -104,11 +95,11 @@ export default function AdminBookingsPage() {
       header: 'Amount',
       render: (b) => (
         <div className="text-right">
-          <div className="font-semibold">{formatCurrencyINR(b.total_amount)}</div>
+          <div className="font-semibold">{formatCurrencyINR(Number(b.total_amount))}</div>
           <div className="text-xs text-muted-foreground">
             {b.payment_status === 'paid'
               ? 'Paid'
-              : `${formatCurrencyINR(b.advance_amount)} paid`}
+              : `${formatCurrencyINR(Number(b.advance_amount))} paid`}
           </div>
         </div>
       ),
@@ -122,7 +113,7 @@ export default function AdminBookingsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Bookings</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {filtered.length} of {mockBookings.length} bookings shown
+            {isLoading ? 'Loading…' : `${bookings.length} booking(s) shown`}
           </p>
         </div>
         <Button onClick={() => navigate('/admin/walk-in-bills/new')}>+ New Walk-in Bill</Button>
@@ -172,11 +163,20 @@ export default function AdminBookingsPage() {
         </CardContent>
       </Card>
 
-      <DataTable
-        columns={columns}
-        data={filtered}
-        onRowClick={(b) => navigate(`/admin/bookings/${b.id}`)}
-      />
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-14 w-full" />
+          ))}
+        </div>
+      ) : (
+        <DataTable
+          columns={columns}
+          data={bookings}
+          emptyMessage="No bookings yet — create your first walk-in bill or wait for online bookings."
+          onRowClick={(b) => navigate(`/admin/bookings/${b.id}`)}
+        />
+      )}
     </div>
   );
 }
