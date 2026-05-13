@@ -66,7 +66,13 @@ export default function TestsPage() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <BookingStatusBadge status={b.booking_status} />
+                    <BookingStatusBadge
+                      status={b.booking_status}
+                      paymentStatus={b.payment_status}
+                      totalAmount={Number(b.total_amount)}
+                      advanceAmount={Number(b.advance_amount)}
+                      balanceAmount={Number(b.balance_amount)}
+                    />
                     <div className="mt-1 text-sm font-semibold text-primary">
                       {formatCurrencyINR(Number(b.total_amount))}
                     </div>

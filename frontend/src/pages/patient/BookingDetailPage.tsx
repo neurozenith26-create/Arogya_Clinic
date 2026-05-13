@@ -1,10 +1,11 @@
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Calendar, Download, FileText, MapPin, User } from 'lucide-react';
+import { ArrowLeft, Calendar, CheckCircle2, Download, FileText, MapPin, ShieldCheck, User } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Skeleton } from '../../components/ui/skeleton';
-import { downloadReport, useMyBooking } from '../../hooks/queries';
+import { downloadReport, resolvePaymentProofUrl, useMyBooking } from '../../hooks/queries';
 import { BookingStatusBadge } from '../../components/shared/BookingStatusBadge';
+import { ProofPreview } from '../../components/payment/ProofPreview';
 import { formatCurrencyINR } from '../../lib/utils';
 
 export default function BookingDetailPage() {
@@ -54,7 +55,14 @@ export default function BookingDetailPage() {
                 {booking.visit_type === 'home_visit' ? 'Home Collection' : 'In-Clinic'}
               </p>
             </div>
-            <BookingStatusBadge status={booking.booking_status} withDescription />
+            <BookingStatusBadge
+              status={booking.booking_status}
+              withDescription
+              paymentStatus={booking.payment_status}
+              totalAmount={Number(booking.total_amount)}
+              advanceAmount={Number(booking.advance_amount)}
+              balanceAmount={Number(booking.balance_amount)}
+            />
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -146,6 +154,54 @@ export default function BookingDetailPage() {
               <span>{formatCurrencyINR(Number(booking.balance_amount))}</span>
             </div>
           </div>
+
+          {booking.payments && booking.payments.length > 0 && (
+            <div>
+              <div className="text-xs font-medium uppercase text-muted-foreground">Payment</div>
+              <ul className="mt-2 space-y-2">
+                {booking.payments
+                  .filter((p) => p.payment_source === 'upi_manual')
+                  .map((p) => (
+                    <li key={p.id} className="rounded-md border p-3 text-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium">
+                            UPI advance · {formatCurrencyINR(p.amount)}
+                          </div>
+                          {p.upi_reference && (
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              UTR:{' '}
+                              <code className="rounded bg-muted px-1 font-mono">
+                                {p.upi_reference}
+                              </code>
+                            </div>
+                          )}
+                          <div className="mt-2 text-xs">
+                            {p.verified_at ? (
+                              <span className="inline-flex items-center gap-1 text-green-700">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Re-verified by clinic on{' '}
+                                {new Date(p.verified_at).toLocaleDateString()}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-muted-foreground">
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                                Awaiting in-person re-verification by clinic
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <ProofPreview
+                          src={resolvePaymentProofUrl(p.proof_url)}
+                          mime={p.payment_proof_mime}
+                          size="small"
+                        />
+                      </div>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
 
           {booking.reports.length > 0 && (
             <div>

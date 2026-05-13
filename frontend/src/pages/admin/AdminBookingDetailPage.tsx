@@ -3,9 +3,11 @@ import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
+  CheckCircle2,
   Download,
   FileDown,
   FileText,
+  ShieldCheck,
   Wallet,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
@@ -18,11 +20,15 @@ import {
   BOOKING_STATUS_DESCRIPTIONS,
   downloadInvoicePdf,
   downloadReport,
+  resolvePaymentProofUrl,
   useAdminBooking,
   useRecordPayment,
+  type AdminPaymentRow,
   type EditableBookingStatus,
 } from '../../hooks/queries';
 import { BookingStatusSelect } from '../../components/admin/BookingStatusSelect';
+import { ProofPreview } from '../../components/payment/ProofPreview';
+import { ReVerifyPaymentModal } from '../../components/admin/ReVerifyPaymentModal';
 import { formatCurrencyINR, cn } from '../../lib/utils';
 import { getApiErrorMessage } from '../../lib/apiClient';
 
@@ -38,6 +44,7 @@ export default function AdminBookingDetailPage() {
   const [paymentAmount, setPaymentAmount] = useState<string>('');
   const [paymentNotes, setPaymentNotes] = useState<string>('');
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [reVerifyPayment, setReVerifyPayment] = useState<AdminPaymentRow | null>(null);
   const [downloading, setDownloading] = useState(false);
 
   if (isLoading) {
@@ -319,42 +326,100 @@ export default function AdminBookingDetailPage() {
                 </p>
               ) : (
                 <ul className="space-y-2">
-                  {booking.payments.map((p) => (
-                    <li
-                      key={p.id}
-                      className={cn(
-                        'flex items-center justify-between rounded-md border p-3 text-sm',
-                        p.payment_status === 'refunded' && 'bg-muted/30',
-                      )}
-                    >
-                      <div>
-                        <div className="font-medium">
-                          {formatCurrencyINR(Number(p.amount))}
-                          {Number(p.refunded_amount) > 0 && (
-                            <span className="ml-2 text-xs text-destructive">
-                              ({formatCurrencyINR(Number(p.refunded_amount))} refunded)
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {p.payment_source === 'razorpay' ? 'Razorpay' : 'Offline'} ·{' '}
-                          {p.payment_method ?? 'unknown'} · {p.payment_type}
-                        </div>
-                        {p.notes && <div className="text-xs text-muted-foreground">{p.notes}</div>}
-                      </div>
-                      <Badge
-                        variant={
-                          p.payment_status === 'captured'
-                            ? 'success'
-                            : p.payment_status === 'refunded'
-                              ? 'destructive'
-                              : 'secondary'
-                        }
+                  {booking.payments.map((p) => {
+                    const isManualUpi = p.payment_source === 'upi_manual';
+                    const sourceLabel =
+                      p.payment_source === 'razorpay'
+                        ? 'Razorpay'
+                        : p.payment_source === 'upi_manual'
+                          ? 'UPI (manual proof)'
+                          : 'Offline';
+                    return (
+                      <li
+                        key={p.id}
+                        className={cn(
+                          'rounded-md border p-3 text-sm',
+                          p.payment_status === 'refunded' && 'bg-muted/30',
+                        )}
                       >
-                        {p.payment_status}
-                      </Badge>
-                    </li>
-                  ))}
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium">
+                              {formatCurrencyINR(Number(p.amount))}
+                              {Number(p.refunded_amount) > 0 && (
+                                <span className="ml-2 text-xs text-destructive">
+                                  ({formatCurrencyINR(Number(p.refunded_amount))} refunded)
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {sourceLabel} · {p.payment_method ?? 'unknown'} ·{' '}
+                              {p.payment_type}
+                            </div>
+                            {p.upi_reference && (
+                              <div className="text-xs">
+                                <span className="text-muted-foreground">UTR: </span>
+                                <code className="rounded bg-muted px-1 font-mono">
+                                  {p.upi_reference}
+                                </code>
+                              </div>
+                            )}
+                            {p.notes && (
+                              <div className="text-xs text-muted-foreground">{p.notes}</div>
+                            )}
+                            {isManualUpi && (
+                              <div className="mt-2 text-xs">
+                                {p.verified_at ? (
+                                  <span className="inline-flex items-center gap-1 text-green-700">
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    Re-verified by{' '}
+                                    {p.verified_by_name ?? 'admin'} on{' '}
+                                    {new Date(p.verified_at).toLocaleString()}
+                                  </span>
+                                ) : (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={() => setReVerifyPayment(p)}
+                                  >
+                                    <ShieldCheck className="mr-1 h-3.5 w-3.5" />
+                                    Re-verify proof
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-start gap-2">
+                            {isManualUpi && p.proof_url && (
+                              <button
+                                type="button"
+                                onClick={() => setReVerifyPayment(p)}
+                                className="rounded-md"
+                                aria-label="Open proof for re-verification"
+                              >
+                                <ProofPreview
+                                  src={resolvePaymentProofUrl(p.proof_url)}
+                                  mime={p.payment_proof_mime}
+                                  size="small"
+                                />
+                              </button>
+                            )}
+                            <Badge
+                              variant={
+                                p.payment_status === 'captured'
+                                  ? 'success'
+                                  : p.payment_status === 'refunded'
+                                    ? 'destructive'
+                                    : 'secondary'
+                              }
+                            >
+                              {p.payment_status}
+                            </Badge>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </CardContent>
@@ -410,6 +475,29 @@ export default function AdminBookingDetailPage() {
           </Card>
         </div>
       </div>
+
+      {reVerifyPayment && (
+        <ReVerifyPaymentModal
+          isOpen
+          onClose={() => setReVerifyPayment(null)}
+          payment={reVerifyPayment}
+          bookingId={booking.id}
+          context={{
+            booking_code: booking.booking_code,
+            patient_name: [
+              booking.patient_snapshot?.first_name,
+              booking.patient_snapshot?.last_name,
+            ]
+              .filter(Boolean)
+              .join(' ') || null,
+            patient_mobile: booking.patient_snapshot?.mobile ?? null,
+            scheduled_date: booking.scheduled_date,
+            scheduled_start_time: booking.scheduled_start_time,
+            booking_type: booking.booking_type,
+            visit_type: booking.visit_type,
+          }}
+        />
+      )}
     </div>
   );
 }

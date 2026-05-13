@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import { LogOut, Menu, Phone, ShoppingCart, User, X } from 'lucide-react';
+import { Home, LogOut, Menu, Phone, ShoppingCart, User, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
   CLINIC_FULL_NAME,
@@ -26,8 +26,18 @@ export function Header() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const cartCount = useCartStore((s) => s.count());
+  const setPreferredVisitType = useCartStore((s) => s.setPreferredVisitType);
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+
+  // Patient clicks "Book Home Visit" CTA → mark the cart's preference so that
+  // when they reach BookTestPage (after adding tests) it starts at the
+  // home-collection step instead of in-clinic. Navigates to /services with a
+  // banner so they pick tests first.
+  const startHomeVisitBooking = () => {
+    setPreferredVisitType('home_visit');
+    navigate('/services?mode=home_visit');
+  };
 
   return (
     <header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -78,6 +88,15 @@ export function Header() {
 
           {PHASE_2_ENABLED && (
             <>
+              <button
+                type="button"
+                onClick={startHomeVisitBooking}
+                className="ml-2 inline-flex items-center gap-1.5 rounded-md bg-gradient-to-r from-orange-500 to-orange-400 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-95"
+                title="Schedule a sample collection at your home"
+              >
+                <Home className="h-4 w-4" />
+                Book Home Visit
+              </button>
               <Link
                 to="/cart"
                 className="relative ml-2 inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -188,6 +207,17 @@ export function Header() {
             ))}
             {PHASE_2_ENABLED && (
               <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    startHomeVisitBooking();
+                  }}
+                  className="mt-2 inline-flex items-center justify-center gap-1.5 rounded-md bg-gradient-to-r from-orange-500 to-orange-400 px-4 py-2 text-sm font-semibold text-white shadow-sm"
+                >
+                  <Home className="h-4 w-4" />
+                  Book Home Visit
+                </button>
                 <Link
                   to="/cart"
                   onClick={() => setMobileOpen(false)}

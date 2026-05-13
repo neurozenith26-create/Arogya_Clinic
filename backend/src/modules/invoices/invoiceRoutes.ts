@@ -112,6 +112,10 @@ router.get(
         params.push(filters.origin);
         wheres.push(`b.booking_origin = $${params.length}`);
       }
+      if (filters.visit_type === 'in_clinic' || filters.visit_type === 'home_visit') {
+        params.push(filters.visit_type);
+        wheres.push(`b.visit_type = $${params.length}`);
+      }
       if (filters.from && /^\d{4}-\d{2}-\d{2}$/.test(filters.from)) {
         params.push(filters.from);
         wheres.push(`i.generated_at::date >= $${params.length}`);
@@ -130,6 +134,7 @@ router.get(
       const result = await query(
         `SELECT i.id, i.invoice_number, i.total_amount, i.generated_at,
                 b.id AS booking_id, b.booking_code, b.booking_type, b.booking_origin,
+                b.visit_type,
                 b.payment_status, b.advance_amount, b.balance_amount,
                 b.patient_snapshot
          FROM invoices i
@@ -146,6 +151,171 @@ router.get(
   },
 );
 
+/**
+ * Stream the printable PDF for one booking into `res`. Shared by the admin
+ * download endpoint and the patient self-download endpoint — the caller is
+ * responsible for any authorization check before calling this.
+ */
+async function streamInvoicePdf(
+  res: import('express').Response,
+  bookingId: string | number | string[],
+): Promise<void> {
+  const bookingRes = await query<BookingRow>(
+    `SELECT id, booking_code, booking_type, booking_origin, visit_type,
+            scheduled_date, scheduled_start_time, patient_snapshot,
+            total_amount, advance_amount, balance_amount, payment_status, created_at
+     FROM bookings WHERE id = $1`,
+    [bookingId],
+  );
+  if (bookingRes.rows.length === 0) {
+    throw new HttpError(404, 'Booking not found', 'NOT_FOUND');
+  }
+  const booking = bookingRes.rows[0];
+
+  const itemsRes = await query<ItemRow>(
+    `SELECT item_name, quantity, unit_price, total_price
+     FROM booking_items WHERE booking_id = $1 ORDER BY id`,
+    [bookingId],
+  );
+
+  const invoiceRes = await query<InvoiceRow>(
+    `SELECT invoice_number, generated_at, gstin
+     FROM invoices WHERE booking_id = $1 ORDER BY id DESC LIMIT 1`,
+    [bookingId],
+  );
+  const invoice = invoiceRes.rows[0] ?? null;
+  const clinic = await loadClinicSettings();
+
+  await renderPdf(res, booking, itemsRes.rows, invoice, clinic);
+}
+
+async function renderPdf(
+  res: import('express').Response,
+  booking: BookingRow,
+  items: ItemRow[],
+  invoice: InvoiceRow | null,
+  clinic: ClinicSettings,
+): Promise<void> {
+
+  // ── Stream PDF ────────────────────────────────────────────────────
+  const doc = new PDFDocument({ size: 'A4', margin: 50 });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader(
+    'Content-Disposition',
+    `inline; filename="invoice-${booking.booking_code}.pdf"`,
+  );
+  doc.pipe(res);
+
+  // Header
+  doc.fillColor('#0066D9').fontSize(22).font('Helvetica-Bold')
+    .text(clinic.clinic_name, { align: 'left' });
+  doc.fillColor('#666').fontSize(10).font('Helvetica')
+    .text(clinic.clinic_address)
+    .text(`Phone: ${clinic.helpline_phone}  |  Email: ${clinic.support_email}`);
+  if (clinic.gstin) doc.text(`GSTIN: ${clinic.gstin}`);
+  doc.moveDown(0.5);
+  doc.strokeColor('#0066D9').lineWidth(2).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+  doc.moveDown(1);
+
+  // Invoice meta + patient panel (two columns)
+  const topY = doc.y;
+  doc.fillColor('#000').fontSize(16).font('Helvetica-Bold').text('TAX INVOICE', 50, topY);
+  doc.fontSize(10).font('Helvetica').fillColor('#444');
+  doc.text(`Invoice #: ${invoice?.invoice_number ?? '—'}`, 50, topY + 25);
+  doc.text(`Booking #: ${booking.booking_code}`);
+  const invDate = invoice?.generated_at ?? booking.created_at;
+  doc.text(`Date: ${new Date(invDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+  doc.text(
+    `Origin: ${booking.booking_origin === 'walk_in' ? 'Walk-in' : 'Online'}  |  Visit: ${
+      booking.visit_type === 'home_visit' ? 'Home Collection' : 'In-Clinic'
+    }`,
+  );
+
+  // Patient column (right side)
+  const patient = booking.patient_snapshot ?? {};
+  const patientX = 320;
+  doc.font('Helvetica-Bold').fillColor('#000').text('Bill To', patientX, topY);
+  doc.font('Helvetica').fillColor('#444').fontSize(10);
+  const patientName =
+    [patient.first_name, patient.last_name].filter(Boolean).join(' ') || '—';
+  doc.text(patientName, patientX, topY + 25);
+  if (patient.mobile) doc.text(`Mobile: ${patient.mobile}`, patientX);
+  if (patient.email) doc.text(`Email: ${patient.email}`, patientX);
+  if (patient.age) doc.text(`Age: ${patient.age}`, patientX);
+
+  doc.moveDown(3);
+
+  // Items table
+  const tableTop = doc.y + 10;
+  const colX = { item: 50, qty: 360, rate: 410, amount: 480 };
+  doc.font('Helvetica-Bold').fontSize(10).fillColor('#fff');
+  doc.rect(50, tableTop, 495, 22).fill('#0066D9');
+  doc.fillColor('#fff')
+    .text('Item / Service', colX.item + 8, tableTop + 7, { width: 295 })
+    .text('Qty', colX.qty, tableTop + 7, { width: 40, align: 'right' })
+    .text('Rate', colX.rate, tableTop + 7, { width: 60, align: 'right' })
+    .text('Amount', colX.amount, tableTop + 7, { width: 60, align: 'right' });
+
+  let rowY = tableTop + 24;
+  doc.font('Helvetica').fillColor('#000').fontSize(10);
+  let subtotal = 0;
+  for (const item of items) {
+    const lineTotal = Number(item.total_price);
+    subtotal += lineTotal;
+    doc.fillColor('#000')
+      .text(item.item_name, colX.item + 8, rowY + 4, { width: 295 })
+      .text(String(item.quantity), colX.qty, rowY + 4, { width: 40, align: 'right' })
+      .text(inr(item.unit_price), colX.rate, rowY + 4, { width: 60, align: 'right' })
+      .text(inr(item.total_price), colX.amount, rowY + 4, { width: 60, align: 'right' });
+    rowY += 20;
+    doc.strokeColor('#eee').lineWidth(0.5).moveTo(50, rowY).lineTo(545, rowY).stroke();
+  }
+
+  // Totals box (right-aligned)
+  rowY += 16;
+  const total = Number(booking.total_amount);
+  const paid = Number(booking.advance_amount);
+  const balance = Number(booking.balance_amount);
+
+  const labelX = 360;
+  const valueX = 480;
+  const valueWidth = 60;
+  doc.font('Helvetica').fontSize(10).fillColor('#444');
+  doc.text('Subtotal', labelX, rowY)
+    .text(inr(subtotal), valueX, rowY, { width: valueWidth, align: 'right' });
+  rowY += 16;
+  doc.font('Helvetica-Bold').fontSize(11).fillColor('#000');
+  doc.text('Total', labelX, rowY)
+    .text(inr(total), valueX, rowY, { width: valueWidth, align: 'right' });
+  rowY += 20;
+  doc.font('Helvetica').fontSize(10).fillColor('#0a8a3a');
+  doc.text('Paid', labelX, rowY)
+    .text(inr(paid), valueX, rowY, { width: valueWidth, align: 'right' });
+  rowY += 16;
+  doc.fillColor(balance > 0 ? '#b00020' : '#444');
+  doc.text('Balance', labelX, rowY)
+    .text(inr(balance), valueX, rowY, { width: valueWidth, align: 'right' });
+
+  // Footer
+  doc.font('Helvetica').fillColor('#666').fontSize(8);
+  doc.text(
+    balance > 0
+      ? `Balance of ${inr(balance)} due at time of service.`
+      : 'Thank you — payment received in full.',
+    50,
+    750,
+    { align: 'center', width: 495 },
+  );
+  doc.text(
+    `Generated ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}  |  Computer-generated invoice; no signature required.`,
+    50,
+    765,
+    { align: 'center', width: 495 },
+  );
+
+  doc.end();
+}
+
 // ─── Admin: download a single invoice as a printable PDF ──────────────────
 
 router.get(
@@ -154,149 +324,31 @@ router.get(
   requireRole('admin', 'super_admin'),
   async (req, res, next) => {
     try {
-      const bookingRes = await query<BookingRow>(
-        `SELECT id, booking_code, booking_type, booking_origin, visit_type,
-                scheduled_date, scheduled_start_time, patient_snapshot,
-                total_amount, advance_amount, balance_amount, payment_status, created_at
-         FROM bookings WHERE id = $1`,
-        [req.params.id],
+      await streamInvoicePdf(res, req.params.id);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Patient: download own invoice ─────────────────────────────────────────
+
+router.get(
+  '/bookings/:id/invoice.pdf',
+  requireAuth,
+  requireRole('patient'),
+  async (req, res, next) => {
+    try {
+      // Ownership gate before streaming — only the patient on the booking
+      // can self-download. Admins use the admin route above.
+      const own = await query<{ id: number }>(
+        `SELECT id FROM bookings WHERE id = $1 AND patient_user_id = $2`,
+        [req.params.id, req.user!.id],
       );
-      if (bookingRes.rows.length === 0) {
+      if (own.rows.length === 0) {
         throw new HttpError(404, 'Booking not found', 'NOT_FOUND');
       }
-      const booking = bookingRes.rows[0];
-
-      const itemsRes = await query<ItemRow>(
-        `SELECT item_name, quantity, unit_price, total_price
-         FROM booking_items WHERE booking_id = $1 ORDER BY id`,
-        [req.params.id],
-      );
-
-      const invoiceRes = await query<InvoiceRow>(
-        `SELECT invoice_number, generated_at, gstin
-         FROM invoices WHERE booking_id = $1 ORDER BY id DESC LIMIT 1`,
-        [req.params.id],
-      );
-      const invoice = invoiceRes.rows[0] ?? null;
-      const clinic = await loadClinicSettings();
-
-      // ── Stream PDF ────────────────────────────────────────────────────
-      const doc = new PDFDocument({ size: 'A4', margin: 50 });
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        `inline; filename="invoice-${booking.booking_code}.pdf"`,
-      );
-      doc.pipe(res);
-
-      // Header
-      doc.fillColor('#0066D9').fontSize(22).font('Helvetica-Bold')
-        .text(clinic.clinic_name, { align: 'left' });
-      doc.fillColor('#666').fontSize(10).font('Helvetica')
-        .text(clinic.clinic_address)
-        .text(`Phone: ${clinic.helpline_phone}  |  Email: ${clinic.support_email}`);
-      if (clinic.gstin) doc.text(`GSTIN: ${clinic.gstin}`);
-      doc.moveDown(0.5);
-      doc.strokeColor('#0066D9').lineWidth(2).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-      doc.moveDown(1);
-
-      // Invoice meta + patient panel (two columns)
-      const topY = doc.y;
-      doc.fillColor('#000').fontSize(16).font('Helvetica-Bold').text('TAX INVOICE', 50, topY);
-      doc.fontSize(10).font('Helvetica').fillColor('#444');
-      doc.text(`Invoice #: ${invoice?.invoice_number ?? '—'}`, 50, topY + 25);
-      doc.text(`Booking #: ${booking.booking_code}`);
-      const invDate = invoice?.generated_at ?? booking.created_at;
-      doc.text(`Date: ${new Date(invDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
-      doc.text(
-        `Origin: ${booking.booking_origin === 'walk_in' ? 'Walk-in' : 'Online'}  |  Visit: ${
-          booking.visit_type === 'home_visit' ? 'Home Collection' : 'In-Clinic'
-        }`,
-      );
-
-      // Patient column (right side)
-      const patient = booking.patient_snapshot ?? {};
-      const patientX = 320;
-      doc.font('Helvetica-Bold').fillColor('#000').text('Bill To', patientX, topY);
-      doc.font('Helvetica').fillColor('#444').fontSize(10);
-      const patientName =
-        [patient.first_name, patient.last_name].filter(Boolean).join(' ') || '—';
-      doc.text(patientName, patientX, topY + 25);
-      if (patient.mobile) doc.text(`Mobile: ${patient.mobile}`, patientX);
-      if (patient.email) doc.text(`Email: ${patient.email}`, patientX);
-      if (patient.age) doc.text(`Age: ${patient.age}`, patientX);
-
-      doc.moveDown(3);
-
-      // Items table
-      const tableTop = doc.y + 10;
-      const colX = { item: 50, qty: 360, rate: 410, amount: 480 };
-      doc.font('Helvetica-Bold').fontSize(10).fillColor('#fff');
-      doc.rect(50, tableTop, 495, 22).fill('#0066D9');
-      doc.fillColor('#fff')
-        .text('Item / Service', colX.item + 8, tableTop + 7, { width: 295 })
-        .text('Qty', colX.qty, tableTop + 7, { width: 40, align: 'right' })
-        .text('Rate', colX.rate, tableTop + 7, { width: 60, align: 'right' })
-        .text('Amount', colX.amount, tableTop + 7, { width: 60, align: 'right' });
-
-      let rowY = tableTop + 24;
-      doc.font('Helvetica').fillColor('#000').fontSize(10);
-      let subtotal = 0;
-      for (const item of itemsRes.rows) {
-        const lineTotal = Number(item.total_price);
-        subtotal += lineTotal;
-        doc.fillColor('#000')
-          .text(item.item_name, colX.item + 8, rowY + 4, { width: 295 })
-          .text(String(item.quantity), colX.qty, rowY + 4, { width: 40, align: 'right' })
-          .text(inr(item.unit_price), colX.rate, rowY + 4, { width: 60, align: 'right' })
-          .text(inr(item.total_price), colX.amount, rowY + 4, { width: 60, align: 'right' });
-        rowY += 20;
-        doc.strokeColor('#eee').lineWidth(0.5).moveTo(50, rowY).lineTo(545, rowY).stroke();
-      }
-
-      // Totals box (right-aligned)
-      rowY += 16;
-      const total = Number(booking.total_amount);
-      const paid = Number(booking.advance_amount);
-      const balance = Number(booking.balance_amount);
-
-      const labelX = 360;
-      const valueX = 480;
-      const valueWidth = 60;
-      doc.font('Helvetica').fontSize(10).fillColor('#444');
-      doc.text('Subtotal', labelX, rowY)
-        .text(inr(subtotal), valueX, rowY, { width: valueWidth, align: 'right' });
-      rowY += 16;
-      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000');
-      doc.text('Total', labelX, rowY)
-        .text(inr(total), valueX, rowY, { width: valueWidth, align: 'right' });
-      rowY += 20;
-      doc.font('Helvetica').fontSize(10).fillColor('#0a8a3a');
-      doc.text('Paid', labelX, rowY)
-        .text(inr(paid), valueX, rowY, { width: valueWidth, align: 'right' });
-      rowY += 16;
-      doc.fillColor(balance > 0 ? '#b00020' : '#444');
-      doc.text('Balance', labelX, rowY)
-        .text(inr(balance), valueX, rowY, { width: valueWidth, align: 'right' });
-
-      // Footer
-      doc.font('Helvetica').fillColor('#666').fontSize(8);
-      doc.text(
-        balance > 0
-          ? `Balance of ${inr(balance)} due at time of service.`
-          : 'Thank you — payment received in full.',
-        50,
-        750,
-        { align: 'center', width: 495 },
-      );
-      doc.text(
-        `Generated ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}  |  Computer-generated invoice; no signature required.`,
-        50,
-        765,
-        { align: 'center', width: 495 },
-      );
-
-      doc.end();
+      await streamInvoicePdf(res, req.params.id);
     } catch (err) {
       next(err);
     }

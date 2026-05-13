@@ -1,7 +1,8 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
-import { Calendar, FlaskConical, FileText, User, LayoutDashboard } from 'lucide-react';
+import { Calendar, FlaskConical, FileText, Home, User, LayoutDashboard } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { useCartStore } from '../stores/cartStore';
 
 const navItems = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, end: true },
@@ -13,10 +14,19 @@ const navItems = [
 
 export function DashboardLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const setPreferredVisitType = useCartStore((s) => s.setPreferredVisitType);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, [location.pathname]);
+
+  // Same intent as the public Header CTA — mark the cart preference + bounce
+  // the patient to /services with home_visit mode active.
+  const startHomeVisitBooking = () => {
+    setPreferredVisitType('home_visit');
+    navigate('/services?mode=home_visit');
+  };
 
   return (
     <div className="container py-6 md:py-8">
@@ -24,6 +34,15 @@ export function DashboardLayout() {
       <div className="grid gap-6 lg:grid-cols-[220px,1fr]">
         {/* Mobile: horizontal scrolling tabs; desktop: vertical sidebar */}
         <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 lg:mx-0 lg:flex-col lg:px-0">
+          <button
+            type="button"
+            onClick={startHomeVisitBooking}
+            className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md bg-gradient-to-r from-orange-500 to-orange-400 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-95 lg:mb-2"
+            title="Schedule a sample collection at your home"
+          >
+            <Home className="h-4 w-4" />
+            Book Home Visit
+          </button>
           {navItems.map((item) => (
             <NavLink
               key={item.to}

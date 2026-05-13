@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { Search, Clock, Droplets, Tag } from 'lucide-react';
+import { CheckCircle2, Clock, Droplets, Home, ShoppingCart, Search, Tag } from 'lucide-react';
 import { Input } from '../../components/ui/input';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
@@ -9,17 +9,42 @@ import { Badge } from '../../components/ui/badge';
 import { Skeleton } from '../../components/ui/skeleton';
 import { cn, formatCurrencyINR } from '../../lib/utils';
 import { useServiceCategories, useServices } from '../../hooks/queries';
+import { useCartStore } from '../../stores/cartStore';
 import { CLINIC_FULL_NAME } from '../../config/featureFlags';
 
 export default function ServicesPage() {
+  const [params] = useSearchParams();
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | undefined>();
+  // `?mode=home_visit` set by the "Book Home Visit" CTA in Header / Dashboard
+  // sidebar. We also check the cart-store preference (which the CTA sets) so
+  // a navigation that drops the query string still keeps the mode visible.
+  const preferredVisitType = useCartStore((s) => s.preferredVisitType);
+  const setPreferredVisitType = useCartStore((s) => s.setPreferredVisitType);
+  const homeVisitMode =
+    params.get('mode') === 'home_visit' || preferredVisitType === 'home_visit';
+
+  const cartItems = useCartStore((s) => s.items);
+  const addItem = useCartStore((s) => s.addItem);
+  const [justAddedId, setJustAddedId] = useState<number | null>(null);
 
   const { data: categories = [] } = useServiceCategories();
   const { data: services = [], isLoading } = useServices({
     categorySlug: activeCategory,
     q: search || undefined,
   });
+
+  const cartCountFor = (serviceId: number): number =>
+    cartItems.find((i) => i.service_id === serviceId)?.quantity ?? 0;
+
+  const handleAddToCart = (service: (typeof services)[number]) => {
+    addItem(service);
+    setJustAddedId(service.id);
+    // Brief "Added ✓" feedback then revert to "Add to cart" label.
+    setTimeout(() => {
+      setJustAddedId((curr) => (curr === service.id ? null : curr));
+    }, 1200);
+  };
 
   return (
     <>
@@ -33,6 +58,29 @@ export default function ServicesPage() {
 
       <section className="bg-gradient-to-b from-accent/40 to-background">
         <div className="container py-12 md:py-16">
+          {homeVisitMode && (
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-orange-300 bg-orange-50 p-4 text-sm text-orange-900">
+              <div className="inline-flex items-center gap-2">
+                <Home className="h-5 w-5" />
+                <span>
+                  <strong>Home collection mode.</strong> Add tests to your cart — at
+                  checkout you'll enter your pincode to see the home-visit charge and
+                  pick a collection slot.
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setPreferredVisitType(undefined);
+                  // Strip the URL param so the banner doesn't re-appear on reload.
+                  window.history.replaceState({}, '', '/services');
+                }}
+              >
+                Switch to in-clinic
+              </Button>
+            </div>
+          )}
           <h1 className="text-4xl font-bold tracking-tight md:text-5xl">Services &amp; Tests</h1>
           <p className="mt-3 max-w-2xl text-muted-foreground">
             Pathology, Radiology, Ultrasonography, Cardiac Diagnostics, and Health Packages —
@@ -117,14 +165,50 @@ export default function ServicesPage() {
                       {s.report_turnaround_hours}h report
                     </span>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1 text-lg font-bold text-primary">
                       <Tag className="h-4 w-4" />
                       {formatCurrencyINR(s.price)}
                     </div>
-                    <Button asChild size="sm">
-                      <Link to={`/services/${s.slug}`}>View details</Link>
-                    </Button>
+                    <div className="flex shrink-0 gap-1.5">
+                      {(() => {
+                        const inCart = cartCountFor(s.id);
+                        const justAdded = justAddedId === s.id;
+                        return (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={inCart > 0 ? 'default' : 'outline'}
+                            onClick={() => handleAddToCart(s)}
+                            title={
+                              inCart > 0
+                                ? `${inCart} in cart — click to add another`
+                                : 'Add to cart'
+                            }
+                          >
+                            {justAdded ? (
+                              <>
+                                <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                                Added
+                              </>
+                            ) : inCart > 0 ? (
+                              <>
+                                <ShoppingCart className="mr-1 h-3.5 w-3.5" />
+                                In cart ({inCart})
+                              </>
+                            ) : (
+                              <>
+                                <ShoppingCart className="mr-1 h-3.5 w-3.5" />
+                                Add to cart
+                              </>
+                            )}
+                          </Button>
+                        );
+                      })()}
+                      <Button asChild size="sm" variant="ghost">
+                        <Link to={`/services/${s.slug}`}>Details</Link>
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

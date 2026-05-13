@@ -11,6 +11,7 @@ import {
   useAdminInvoices,
   type AdminInvoiceRow,
 } from '../../hooks/queries';
+import { BookingOriginPill } from '../../components/shared/BookingOriginPill';
 import { getApiErrorMessage } from '../../lib/apiClient';
 import { formatCurrencyINR } from '../../lib/utils';
 import { Download, FileDown } from 'lucide-react';
@@ -20,6 +21,7 @@ export default function AdminInvoicesPage() {
   const [search, setSearch] = useState('');
   const [type, setType] = useState<'all' | 'doctor_appointment' | 'test_booking'>('all');
   const [origin, setOrigin] = useState<'all' | 'online' | 'walk_in'>('all');
+  const [visitType, setVisitType] = useState<'all' | 'in_clinic' | 'home_visit'>('all');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
@@ -28,6 +30,7 @@ export default function AdminInvoicesPage() {
   const { data: invoices = [], isLoading } = useAdminInvoices({
     type: type === 'all' ? undefined : type,
     origin: origin === 'all' ? undefined : origin,
+    visit_type: visitType === 'all' ? undefined : visitType,
     from: from || undefined,
     to: to || undefined,
     q: search || undefined,
@@ -65,11 +68,13 @@ export default function AdminInvoicesPage() {
       header: 'Source',
       render: (i) => (
         <div className="space-y-1">
-          <Badge variant={i.booking_origin === 'walk_in' ? 'outline' : 'default'}>
-            {i.booking_origin === 'walk_in' ? 'Walk-in' : 'Online'}
-          </Badge>
+          <BookingOriginPill
+            origin={i.booking_origin}
+            visitType={i.visit_type}
+            compact
+          />
           <div className="text-xs text-muted-foreground">
-            {i.booking_type === 'doctor_appointment' ? 'Doctor' : 'Test'}
+            {i.booking_type === 'doctor_appointment' ? 'Doctor consultation' : 'Test booking'}
           </div>
         </div>
       ),
@@ -211,8 +216,17 @@ export default function AdminInvoicesPage() {
             className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
           >
             <option value="all">All sources</option>
-            <option value="online">Online</option>
+            <option value="online">Online (pre-booked)</option>
             <option value="walk_in">Walk-in</option>
+          </select>
+          <select
+            value={visitType}
+            onChange={(e) => setVisitType(e.target.value as never)}
+            className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="all">All visit types</option>
+            <option value="in_clinic">In-clinic only</option>
+            <option value="home_visit">Home collection only</option>
           </select>
           <div className="grid grid-cols-2 gap-2">
             <Input

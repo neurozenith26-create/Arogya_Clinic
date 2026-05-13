@@ -1,10 +1,25 @@
 import { Router, type Router as ExpressRouter } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import { query, transaction } from '../../db/pool.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { HttpError } from '../../middleware/errorHandler.js';
 
 const router: ExpressRouter = Router();
+
+// ─── Payment-proof uploads (multipart for /bookings/{test,doctor-appointment}) ──
+const PROOF_MAX_SIZE = 5 * 1024 * 1024; // 5 MB
+const PROOF_ALLOWED_MIME = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/jpg',
+  'image/webp',
+  'application/pdf',
+]);
+const proofUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: PROOF_MAX_SIZE },
+});
 
 // (Auth signup/login moved to authRoutes.ts — this module now handles bookings,
 // slots, payments, reports, and admin operations.)
@@ -341,154 +356,402 @@ router.get('/home-collection/slots', async (req, res, next) => {
 
 const doctorBookingSchema = z.object({
   doctor_id: z.string().uuid(),
-  doctor_center_id: z.number().int().positive(),
+  // pg returns BIGSERIAL ids as strings (BIGINT can exceed JS Number range).
+  // Accept either string or number on the wire — coerce here at the boundary.
+  doctor_center_id: z.coerce.number().int().positive(),
   visit_type: z.enum(['in_clinic', 'home_visit']),
   scheduled_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   scheduled_start_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
   patient_snapshot: z.record(z.unknown()),
   reason_for_visit: z.string().optional(),
+  upi_reference: z.string().max(100).optional(),
 });
 
-router.post('/bookings/doctor-appointment', requireAuth, requireRole('patient'), async (req, res, next) => {
-  try {
-    const data = doctorBookingSchema.parse(req.body);
-    const booking = await transaction(async (client) => {
-      const consultFeeRes = await client.query<{ consultation_fee: number }>(
-        'SELECT consultation_fee FROM users WHERE id = $1 AND role = $2',
-        [data.doctor_id, 'doctor'],
-      );
-      if (consultFeeRes.rows.length === 0) throw new HttpError(404, 'Doctor not found', 'NOT_FOUND');
-      const fee = Number(consultFeeRes.rows[0].consultation_fee);
-      const advance = Math.round(fee / 2);
-
-      const bookingRes = await client.query(
-        `INSERT INTO bookings (
-          patient_user_id, booking_type, booking_origin, visit_type,
-          doctor_user_id, doctor_center_id,
-          scheduled_date, scheduled_start_time,
-          patient_snapshot,
-          subtotal_amount, total_amount, advance_amount, balance_amount,
-          booking_status, payment_status, reason_for_visit, created_by_user_id
-        ) VALUES (
-          $1, 'doctor_appointment', 'online', $2,
-          $3, $4, $5, $6, $7,
-          $8, $8, $9, $10,
-          'pending_payment', 'pending', $11, $1
-        ) RETURNING id, booking_code`,
-        [
-          req.user!.id,
-          data.visit_type,
-          data.doctor_id,
-          data.doctor_center_id,
-          data.scheduled_date,
-          data.scheduled_start_time,
-          JSON.stringify(data.patient_snapshot),
-          fee,
-          advance,
-          fee - advance,
-          data.reason_for_visit ?? null,
-        ],
-      );
-
-      await client.query(
-        `INSERT INTO booking_items (booking_id, item_type, doctor_user_id, item_name, quantity, unit_price, total_price)
-         VALUES ($1, 'doctor_consultation', $2, $3, 1, $4, $4)`,
-        [bookingRes.rows[0].id, data.doctor_id, 'Doctor consultation', fee],
-      );
-
-      return bookingRes.rows[0];
-    });
-    res.status(201).json({ data: booking });
-  } catch (err) {
-    next(err);
+/**
+ * Parse the multipart `data` field as JSON. Patients submit FormData with
+ * `payment_proof` (file) + `data` (JSON-stringified booking payload) +
+ * optional `upi_reference`. We do this here instead of letting Zod parse
+ * a flat req.body because nested objects (patient_snapshot, items, etc.)
+ * survive intact when JSON-encoded, whereas multipart text fields lose
+ * structure.
+ */
+function parseMultipartData(req: { body: Record<string, unknown> }): Record<string, unknown> {
+  const raw = req.body?.data;
+  if (typeof raw !== 'string' || raw.length === 0) {
+    throw new HttpError(400, 'Missing `data` field in multipart body', 'BAD_REQUEST');
   }
-});
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // Pass `upi_reference` through if it was sent as a sibling text field
+    if (typeof req.body.upi_reference === 'string' && !parsed.upi_reference) {
+      parsed.upi_reference = req.body.upi_reference;
+    }
+    return parsed;
+  } catch {
+    throw new HttpError(400, 'Invalid JSON in `data` field', 'BAD_REQUEST');
+  }
+}
+
+function validateProofFile(file: Express.Multer.File | undefined): Express.Multer.File {
+  if (!file) {
+    throw new HttpError(400, 'Payment proof required', 'PROOF_REQUIRED');
+  }
+  if (!PROOF_ALLOWED_MIME.has(file.mimetype)) {
+    throw new HttpError(
+      400,
+      'Proof must be JPG, PNG, WEBP image or PDF',
+      'UNSUPPORTED_MEDIA',
+    );
+  }
+  return file;
+}
+
+router.post(
+  '/bookings/doctor-appointment',
+  requireAuth,
+  requireRole('patient'),
+  proofUpload.single('payment_proof'),
+  async (req, res, next) => {
+    try {
+      const data = doctorBookingSchema.parse(parseMultipartData(req));
+      const proof = validateProofFile(req.file);
+
+      const booking = await transaction(async (client) => {
+        const consultFeeRes = await client.query<{ consultation_fee: number }>(
+          'SELECT consultation_fee FROM users WHERE id = $1 AND role = $2',
+          [data.doctor_id, 'doctor'],
+        );
+        if (consultFeeRes.rows.length === 0)
+          throw new HttpError(404, 'Doctor not found', 'NOT_FOUND');
+        const fee = Number(consultFeeRes.rows[0].consultation_fee);
+
+        // Two-stage UPI-manual flow (see migration 0024):
+        // 1) Patient uploads proof → booking is INSTANTLY confirmed, payments
+        //    row created with payment_status='captured', verified_at=NULL.
+        // 2) Admin re-verifies at sample-collection / clinic-visit time via
+        //    POST /admin/payments/:id/re-verify (fills verified_at).
+        // 50% advance = round(total / 2); patient also sees a "Balance due"
+        // line for the remainder.
+        const advance = Math.round(fee / 2);
+        const balance = fee - advance;
+        const paymentStatus = advance >= fee ? 'paid' : 'partial';
+
+        const bookingRes = await client.query<{ id: number; booking_code: string }>(
+          `INSERT INTO bookings (
+            patient_user_id, booking_type, booking_origin, visit_type,
+            doctor_user_id, doctor_center_id,
+            scheduled_date, scheduled_start_time,
+            patient_snapshot,
+            subtotal_amount, total_amount, advance_amount, balance_amount,
+            booking_status, payment_status, reason_for_visit, created_by_user_id
+          ) VALUES (
+            $1, 'doctor_appointment', 'online', $2,
+            $3, $4, $5, $6, $7,
+            $8, $8, $9, $10,
+            'confirmed', $11, $12, $1
+          ) RETURNING id, booking_code`,
+          [
+            req.user!.id,
+            data.visit_type,
+            data.doctor_id,
+            data.doctor_center_id,
+            data.scheduled_date,
+            data.scheduled_start_time,
+            JSON.stringify(data.patient_snapshot),
+            fee,
+            advance,
+            balance,
+            paymentStatus,
+            data.reason_for_visit ?? null,
+          ],
+        );
+
+        await client.query(
+          `INSERT INTO booking_items (booking_id, item_type, doctor_user_id, item_name, quantity, unit_price, total_price)
+           VALUES ($1, 'doctor_consultation', $2, $3, 1, $4, $4)`,
+          [bookingRes.rows[0].id, data.doctor_id, 'Doctor consultation', fee],
+        );
+
+        // Auto-generate an invoice row so the admin's invoice list and the
+        // patient's "Download Invoice" button work the moment the booking
+        // is created. The trigger fills invoice_number.
+        await client.query(
+          `INSERT INTO invoices (booking_id, subtotal_amount, tax_amount, discount_amount, total_amount, invoice_number)
+           VALUES ($1, $2, 0, 0, $2, '')`,
+          [bookingRes.rows[0].id, fee],
+        );
+
+        // payments row carries the BYTEA proof; verified_at remains NULL
+        // until the in-person admin re-verify step (see plan).
+        const paymentRes = await client.query<{ id: number }>(
+          `INSERT INTO payments
+             (booking_id, payment_source, amount, currency,
+              payment_method, payment_status, payment_type,
+              payment_proof_bytes, payment_proof_mime, upi_reference,
+              captured_at)
+           VALUES ($1, 'upi_manual', $2, 'INR',
+                   'upi_qr_offline', 'captured', 'advance',
+                   $3, $4, $5, NOW())
+           RETURNING id`,
+          [
+            bookingRes.rows[0].id,
+            advance,
+            proof.buffer,
+            proof.mimetype,
+            data.upi_reference ?? null,
+          ],
+        );
+
+        return { ...bookingRes.rows[0], payment_id: paymentRes.rows[0].id };
+      });
+      res.status(201).json({ data: booking });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 const testBookingSchema = z.object({
+  // pg returns BIGSERIAL ids and NUMERIC columns as strings. Coerce both so
+  // the patient cart can forward whatever GET /services gave it (cart items
+  // carry service_id as the raw value from the catalog endpoint).
   items: z
-    .array(z.object({ service_id: z.number().int().positive(), quantity: z.number().int().positive() }))
+    .array(
+      z.object({
+        service_id: z.coerce.number().int().positive(),
+        quantity: z.coerce.number().int().positive(),
+      }),
+    )
     .min(1),
   visit_type: z.enum(['in_clinic', 'home_visit']),
   scheduled_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   scheduled_start_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
   patient_snapshot: z.record(z.unknown()),
   delivery_address: z.record(z.unknown()).optional(),
-  home_visit_charge: z.number().nonnegative().default(0),
+  home_visit_charge: z.coerce.number().nonnegative().default(0),
   special_instructions: z.string().optional(),
+  upi_reference: z.string().max(100).optional(),
 });
 
-router.post('/bookings/test', requireAuth, requireRole('patient'), async (req, res, next) => {
-  try {
-    const data = testBookingSchema.parse(req.body);
-    const booking = await transaction(async (client) => {
-      const ids = data.items.map((i) => i.service_id);
-      const svcRes = await client.query<{ id: number; name: string; price: number; is_package: boolean }>(
-        `SELECT id, name, price, is_package FROM services WHERE id = ANY($1::bigint[]) AND is_active = TRUE`,
-        [ids],
-      );
+router.post(
+  '/bookings/test',
+  requireAuth,
+  requireRole('patient'),
+  proofUpload.single('payment_proof'),
+  async (req, res, next) => {
+    try {
+      const data = testBookingSchema.parse(parseMultipartData(req));
+      const proof = validateProofFile(req.file);
 
-      let subtotal = 0;
-      const itemRows = data.items.map((i) => {
-        const svc = svcRes.rows.find((s) => s.id === i.service_id);
-        if (!svc) throw new HttpError(404, `Service ${i.service_id} not found`, 'NOT_FOUND');
-        const price = Number(svc.price);
-        subtotal += price * i.quantity;
-        return { ...i, name: svc.name, price, is_package: svc.is_package };
-      });
+      const booking = await transaction(async (client) => {
+        const ids = data.items.map((i) => i.service_id);
+        // services.id is BIGSERIAL — pg returns it as a string. Use `string` in
+        // the row type so the `===` lookup below compares like-for-like.
+        const svcRes = await client.query<{
+          id: string;
+          name: string;
+          price: string;
+          is_package: boolean;
+        }>(
+          `SELECT id, name, price, is_package FROM services WHERE id = ANY($1::bigint[]) AND is_active = TRUE`,
+          [ids],
+        );
 
-      const total = subtotal + data.home_visit_charge;
-      const advance = Math.round(total / 2);
+        let subtotal = 0;
+        const itemRows = data.items.map((i) => {
+          // Compare via Number() because data.items.service_id was Zod-coerced
+          // to a number while svc.id stays a string from pg.
+          const svc = svcRes.rows.find((s) => Number(s.id) === i.service_id);
+          if (!svc) throw new HttpError(404, `Service ${i.service_id} not found`, 'NOT_FOUND');
+          const price = Number(svc.price);
+          subtotal += price * i.quantity;
+          return { ...i, name: svc.name, price, is_package: svc.is_package };
+        });
 
-      const bookingRes = await client.query(
-        `INSERT INTO bookings (
-          patient_user_id, booking_type, booking_origin, visit_type,
-          scheduled_date, scheduled_start_time,
-          patient_snapshot, delivery_address,
-          subtotal_amount, home_visit_charge, total_amount, advance_amount, balance_amount,
-          booking_status, payment_status, special_instructions,
-          collection_status, created_by_user_id
-        ) VALUES (
-          $1, 'test_booking', 'online', $2,
-          $3, $4, $5, $6,
-          $7, $8, $9, $10, $11,
-          'pending_payment', 'pending', $12,
-          $13, $1
-        ) RETURNING id, booking_code`,
-        [
-          req.user!.id,
-          data.visit_type,
-          data.scheduled_date,
-          data.scheduled_start_time,
-          JSON.stringify(data.patient_snapshot),
-          data.delivery_address ? JSON.stringify(data.delivery_address) : null,
-          subtotal,
-          data.home_visit_charge,
-          total,
-          advance,
-          total - advance,
-          data.special_instructions ?? null,
-          data.visit_type === 'home_visit' ? 'not_assigned' : 'not_required',
-        ],
-      );
+        const total = subtotal + data.home_visit_charge;
 
-      for (const item of itemRows) {
-        await client.query(
-          `INSERT INTO booking_items (booking_id, item_type, service_id, item_name, quantity, unit_price, total_price)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        // Two-stage UPI-manual flow (see migration 0024): proof upload =
+        // instant confirm; admin re-verifies in person at sample-collection
+        // time. 50% advance pre-filled because the patient just paid it.
+        const advance = Math.round(total / 2);
+        const balance = total - advance;
+        const paymentStatus = advance >= total ? 'paid' : 'partial';
+
+        const bookingRes = await client.query<{ id: number; booking_code: string }>(
+          `INSERT INTO bookings (
+            patient_user_id, booking_type, booking_origin, visit_type,
+            scheduled_date, scheduled_start_time,
+            patient_snapshot, delivery_address,
+            subtotal_amount, home_visit_charge, total_amount, advance_amount, balance_amount,
+            booking_status, payment_status, special_instructions,
+            collection_status, created_by_user_id
+          ) VALUES (
+            $1, 'test_booking', 'online', $2,
+            $3, $4, $5, $6,
+            $7, $8, $9, $10, $11,
+            'confirmed', $12, $13,
+            $14, $1
+          ) RETURNING id, booking_code`,
           [
-            bookingRes.rows[0].id,
-            item.is_package ? 'package' : 'test',
-            item.service_id,
-            item.name,
-            item.quantity,
-            item.price,
-            item.price * item.quantity,
+            req.user!.id,
+            data.visit_type,
+            data.scheduled_date,
+            data.scheduled_start_time,
+            JSON.stringify(data.patient_snapshot),
+            data.delivery_address ? JSON.stringify(data.delivery_address) : null,
+            subtotal,
+            data.home_visit_charge,
+            total,
+            advance,
+            balance,
+            paymentStatus,
+            data.special_instructions ?? null,
+            data.visit_type === 'home_visit' ? 'not_assigned' : 'not_required',
           ],
         );
+
+        for (const item of itemRows) {
+          await client.query(
+            `INSERT INTO booking_items (booking_id, item_type, service_id, item_name, quantity, unit_price, total_price)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              bookingRes.rows[0].id,
+              item.is_package ? 'package' : 'test',
+              item.service_id,
+              item.name,
+              item.quantity,
+              item.price,
+              item.price * item.quantity,
+            ],
+          );
+        }
+
+        // Auto-generate the invoice row — same as the walk-in flow does — so
+        // every booking (walk-in, doctor appt, online test) has an invoice
+        // available the moment it's created.
+        await client.query(
+          `INSERT INTO invoices (booking_id, subtotal_amount, tax_amount, discount_amount, total_amount, invoice_number)
+           VALUES ($1, $2, 0, 0, $3, '')`,
+          [bookingRes.rows[0].id, subtotal, total],
+        );
+
+        const paymentRes = await client.query<{ id: number }>(
+          `INSERT INTO payments
+             (booking_id, payment_source, amount, currency,
+              payment_method, payment_status, payment_type,
+              payment_proof_bytes, payment_proof_mime, upi_reference,
+              captured_at)
+           VALUES ($1, 'upi_manual', $2, 'INR',
+                   'upi_qr_offline', 'captured', 'advance',
+                   $3, $4, $5, NOW())
+           RETURNING id`,
+          [
+            bookingRes.rows[0].id,
+            advance,
+            proof.buffer,
+            proof.mimetype,
+            data.upi_reference ?? null,
+          ],
+        );
+
+        return { ...bookingRes.rows[0], payment_id: paymentRes.rows[0].id };
+      });
+      res.status(201).json({ data: booking });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * STUB for the Razorpay payment-confirmation step. Until the real Razorpay
+ * integration is wired (signature-verified webhook on
+ * `POST /webhooks/razorpay`), this endpoint stands in for it from the
+ * patient's PaymentCallbackPage. It transactionally:
+ *   - locks the bookings row (FOR UPDATE)
+ *   - bumps `advance_amount` to round(total_amount / 2)
+ *   - drops `balance_amount` to `total - advance`
+ *   - flips `booking_status: pending_payment → confirmed`
+ *   - flips `payment_status: pending → partial` (or `paid` if total <= 0)
+ *   - INSERTs a `payments` row marked `payment_source='razorpay'`,
+ *     `payment_status='captured'`, `payment_method='upi'`, with a mock
+ *     `razorpay_order_id` so the admin payment ledger reflects the booking.
+ *
+ * Idempotent — if the booking is already `confirmed` (or further along), the
+ * endpoint returns the current state without double-charging or duplicating
+ * the payments row.
+ *
+ * REMOVE THIS HANDLER once `POST /webhooks/razorpay` is implemented for
+ * real and the patient flow opens Razorpay Checkout directly.
+ */
+router.post('/bookings/:id/confirm-payment-stub', requireAuth, requireRole('patient'), async (req, res, next) => {
+  try {
+    const bookingId = Number(req.params.id);
+    if (!Number.isInteger(bookingId)) {
+      throw new HttpError(400, 'Invalid booking id', 'BAD_REQUEST');
+    }
+    const updated = await transaction(async (client) => {
+      const bookingRes = await client.query<{
+        id: number;
+        booking_code: string;
+        total_amount: string;
+        booking_status: string;
+        payment_status: string;
+      }>(
+        `SELECT id, booking_code, total_amount, booking_status, payment_status
+         FROM bookings
+         WHERE id = $1 AND patient_user_id = $2
+         FOR UPDATE`,
+        [bookingId, req.user!.id],
+      );
+      if (bookingRes.rows.length === 0) {
+        throw new HttpError(404, 'Booking not found', 'NOT_FOUND');
       }
-      return bookingRes.rows[0];
+      const b = bookingRes.rows[0];
+
+      // Idempotent: if already confirmed (or beyond pending_payment), do nothing.
+      if (b.booking_status !== 'pending_payment') {
+        return b;
+      }
+
+      const total = Number(b.total_amount);
+      const advance = Math.round(total / 2);
+      const balance = total - advance;
+      const newPaymentStatus = total <= 0 ? 'paid' : advance >= total ? 'paid' : 'partial';
+      // For free/₹0 bookings (e.g. seed price = 0), skip Confirmation as paid.
+      const newBookingStatus = 'confirmed';
+
+      await client.query(
+        `UPDATE bookings
+            SET advance_amount = $1,
+                balance_amount = $2,
+                booking_status = $3,
+                payment_status = $4,
+                updated_at = NOW()
+          WHERE id = $5`,
+        [advance, balance, newBookingStatus, newPaymentStatus, bookingId],
+      );
+
+      // Only record an actual payment if money changed hands (advance > 0).
+      // ₹0 bookings still confirm but don't get a phantom payments row.
+      if (advance > 0) {
+        const mockOrderId = `order_mock_${bookingId}_${Date.now()}`;
+        await client.query(
+          `INSERT INTO payments
+             (booking_id, payment_source, razorpay_order_id, amount, currency,
+              payment_method, payment_status, payment_type, captured_at, notes)
+           VALUES ($1, 'razorpay', $2, $3, 'INR', 'upi', 'captured', 'advance', NOW(),
+                   'Auto-confirmed via stub endpoint — replace with real Razorpay webhook before launch.')`,
+          [bookingId, mockOrderId, advance],
+        );
+      }
+      return {
+        ...b,
+        booking_status: newBookingStatus,
+        payment_status: newPaymentStatus,
+      };
     });
-    res.status(201).json({ data: booking });
+    res.json({ data: { id: updated.id, booking_code: updated.booking_code, booking_status: updated.booking_status, payment_status: updated.payment_status } });
   } catch (err) {
     next(err);
   }
@@ -536,7 +799,29 @@ router.get('/bookings/:id', requireAuth, requireRole('patient'), async (req, res
        FROM reports WHERE booking_id = $1 AND is_active = TRUE ORDER BY version DESC`,
       [req.params.id],
     );
-    res.json({ data: { ...bookingRes.rows[0], items: items.rows, reports: reports.rows } });
+    // Manual-UPI proof rows — patient gets the streaming URL, not the bytes.
+    // We also surface `verified_at` so the patient sees "Re-verified by clinic
+    // on …" once admin has done the in-person re-verify step.
+    const payments = await query(
+      `SELECT id, payment_source, amount, payment_status, payment_type,
+              payment_method, captured_at, upi_reference, verified_at,
+              payment_proof_mime,
+              CASE WHEN payment_proof_bytes IS NOT NULL
+                   THEN '/api/v1/payments/' || id || '/proof'
+                   ELSE NULL END AS proof_url
+         FROM payments
+        WHERE booking_id = $1
+        ORDER BY created_at`,
+      [req.params.id],
+    );
+    res.json({
+      data: {
+        ...bookingRes.rows[0],
+        items: items.rows,
+        reports: reports.rows,
+        payments: payments.rows,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -1451,6 +1736,7 @@ router.get('/admin/bookings', requireAuth, requireRole('admin', 'super_admin'), 
       .object({
         type: z.enum(['doctor_appointment', 'test_booking']).optional(),
         origin: z.enum(['online', 'walk_in']).optional(),
+        visit_type: z.enum(['in_clinic', 'home_visit']).optional(),
         status: z.string().optional(),
         q: z.string().optional(),
       })
@@ -1465,6 +1751,10 @@ router.get('/admin/bookings', requireAuth, requireRole('admin', 'super_admin'), 
     if (filters.origin) {
       params.push(filters.origin);
       wheres.push(`booking_origin = $${params.length}`);
+    }
+    if (filters.visit_type) {
+      params.push(filters.visit_type);
+      wheres.push(`visit_type = $${params.length}`);
     }
     if (filters.status) {
       params.push(filters.status);
@@ -1519,10 +1809,18 @@ router.get('/admin/bookings/:id', requireAuth, requireRole('admin', 'super_admin
       [req.params.id],
     );
     const payments = await query(
-      `SELECT id, payment_source, razorpay_order_id, razorpay_payment_id, amount, currency,
-              payment_method, payment_status, payment_type, captured_at, refunded_amount,
-              refund_reason, refunded_at, notes, created_at
-       FROM payments WHERE booking_id = $1 ORDER BY created_at`,
+      `SELECT p.id, p.payment_source, p.razorpay_order_id, p.razorpay_payment_id, p.amount, p.currency,
+              p.payment_method, p.payment_status, p.payment_type, p.captured_at, p.refunded_amount,
+              p.refund_reason, p.refunded_at, p.notes, p.created_at,
+              p.upi_reference, p.verified_at, p.verified_by_user_id, p.verification_notes,
+              p.payment_proof_mime,
+              CASE WHEN p.payment_proof_bytes IS NOT NULL
+                   THEN '/api/v1/admin/payments/' || p.id || '/proof'
+                   ELSE NULL END AS proof_url,
+              (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = p.verified_by_user_id) AS verified_by_name
+         FROM payments p
+        WHERE p.booking_id = $1
+        ORDER BY p.created_at`,
       [req.params.id],
     );
     const reports = await query(
@@ -1795,6 +2093,104 @@ router.patch('/admin/bookings/:id/status', requireAuth, requireRole('admin', 'su
   }
 });
 
+// ─── Admin: manual-UPI payment re-verify queue + action ───────────────────
+// Two-stage flow per plan/migration 0024: the patient's proof upload at
+// booking time already flipped `payments.payment_status='captured'` and the
+// booking to `confirmed`. This is the IN-PERSON re-verify step admin runs at
+// sample-collection / clinic-visit time. We just stamp `verified_at` plus
+// who did it; nothing else changes.
+
+router.get(
+  '/admin/payments/pending-re-verify',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (_req, res, next) => {
+    try {
+      const result = await query(
+        `SELECT p.id              AS payment_id,
+                p.amount,
+                p.upi_reference,
+                p.payment_proof_mime,
+                p.created_at      AS submitted_at,
+                b.id              AS booking_id,
+                b.booking_code,
+                b.booking_type,
+                b.booking_origin,
+                b.visit_type,
+                b.scheduled_date,
+                b.scheduled_start_time,
+                b.patient_snapshot,
+                b.total_amount,
+                b.advance_amount,
+                b.balance_amount,
+                b.booking_status,
+                b.payment_status
+           FROM payments p
+           JOIN bookings b ON b.id = p.booking_id
+          WHERE p.payment_source = 'upi_manual'
+            AND p.verified_at IS NULL
+            AND b.booking_status NOT IN ('cancelled', 'no_show')
+          ORDER BY b.scheduled_date NULLS LAST, p.created_at`,
+      );
+      res.json({ data: result.rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/admin/payments/:paymentId/re-verify',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const paymentId = Number(req.params.paymentId);
+      if (!Number.isInteger(paymentId)) {
+        throw new HttpError(400, 'Invalid payment id', 'BAD_REQUEST');
+      }
+      const { notes } = z
+        .object({ notes: z.string().max(500).optional() })
+        .parse(req.body ?? {});
+
+      // Idempotent: only flip if not already re-verified. Returns the row
+      // whether or not the UPDATE matched, so the caller can show "already
+      // verified by X on Y" without a second round-trip.
+      const result = await query<{
+        id: number;
+        booking_id: number;
+        verified_at: string | null;
+        verified_by_user_id: string | null;
+      }>(
+        `WITH upd AS (
+           UPDATE payments
+              SET verified_by_user_id = $1,
+                  verified_at         = NOW(),
+                  verification_notes  = COALESCE($2, verification_notes)
+            WHERE id = $3
+              AND payment_source = 'upi_manual'
+              AND verified_at IS NULL
+          RETURNING id, booking_id, verified_at, verified_by_user_id
+         )
+         SELECT id, booking_id, verified_at, verified_by_user_id FROM upd
+         UNION ALL
+         SELECT id, booking_id, verified_at, verified_by_user_id
+           FROM payments
+          WHERE id = $3
+            AND NOT EXISTS (SELECT 1 FROM upd)
+          LIMIT 1`,
+        [req.user!.id, notes ?? null, paymentId],
+      );
+      if (result.rows.length === 0) {
+        throw new HttpError(404, 'Payment not found', 'NOT_FOUND');
+      }
+      res.json({ data: result.rows[0] });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // ─── Admin: booking lookup by code (used by report upload flow) ───────────
 // Distinct path (not `/admin/bookings/lookup`) because that would collide
 // with `/admin/bookings/:id` and Express would route 'lookup' as an id.
@@ -1926,21 +2322,25 @@ router.post(
           .map((i) => ('service_id' in i ? i.service_id : null))
           .filter((id): id is number => id !== null);
 
+        // services.id is BIGSERIAL — pg returns it as a string, NOT a number.
+        // Typing the row as `string` here makes the `.find()` comparison
+        // below honest about what's happening.
         const catalog =
           catalogIds.length > 0
-            ? await client.query<{ id: number; name: string; price: number; is_package: boolean }>(
+            ? await client.query<{ id: string; name: string; price: string; is_package: boolean }>(
                 `SELECT id, name, price, is_package FROM services WHERE id = ANY($1::bigint[])`,
                 [catalogIds],
               )
-            : { rows: [] as Array<{ id: number; name: string; price: number; is_package: boolean }> };
+            : { rows: [] as Array<{ id: string; name: string; price: string; is_package: boolean }> };
 
         const normalised = data.items.map((i) => {
           if ('service_id' in i) {
-            const svc = catalog.rows.find((s) => s.id === i.service_id);
+            // i.service_id is a number; svc.id is a string from pg — coerce.
+            const svc = catalog.rows.find((s) => Number(s.id) === i.service_id);
             if (!svc) throw new HttpError(404, `Service ${i.service_id} not found`, 'NOT_FOUND');
             return {
               item_type: svc.is_package ? 'package' : ('test' as const),
-              service_id: svc.id,
+              service_id: Number(svc.id),
               item_name: svc.name,
               unit_price: Number(svc.price),
               quantity: i.quantity,

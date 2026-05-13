@@ -56,6 +56,9 @@ const AdminSettingsPage = lazy(() => import('./pages/admin/AdminSettingsPage'));
 const AdminAnalyticsPage = lazy(() => import('./pages/admin/AdminAnalyticsPage'));
 const AdminReportsPage = lazy(() => import('./pages/admin/AdminReportsPage'));
 const AdminInvoicesPage = lazy(() => import('./pages/admin/AdminInvoicesPage'));
+const AdminPaymentVerificationsPage = lazy(
+  () => import('./pages/admin/AdminPaymentVerificationsPage'),
+);
 const AdminPincodesPage = lazy(() => import('./pages/admin/AdminPincodesPage'));
 const WalkInBillPage = lazy(() => import('./pages/admin/WalkInBillPage'));
 const HomeCollectionBoardPage = lazy(() => import('./pages/admin/HomeCollectionBoardPage'));
@@ -168,6 +171,10 @@ export default function App() {
               <Route path="/admin/reports" element={<AdminReportsPage />} />
               <Route path="/admin/invoices" element={<AdminInvoicesPage />} />
               <Route path="/admin/payments" element={<AdminPaymentsPage />} />
+              <Route
+                path="/admin/payment-verifications"
+                element={<AdminPaymentVerificationsPage />}
+              />
               <Route path="/admin/feedback" element={<AdminFeedbackPage />} />
               <Route path="/admin/enquiries" element={<AdminEnquiriesPage />} />
               <Route path="/admin/analytics" element={<AdminAnalyticsPage />} />

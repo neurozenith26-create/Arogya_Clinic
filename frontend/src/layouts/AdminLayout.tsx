@@ -15,6 +15,7 @@ import {
   Mail,
   MapPin,
   BarChart3,
+  ShieldCheck,
   Settings,
   LogOut,
   Home,
@@ -25,13 +26,23 @@ import {
 import { cn } from '../lib/utils';
 import { useAuthStore } from '../stores/authStore';
 import { Logo } from '../components/shared/Logo';
+import { usePendingReVerifyPayments } from '../hooks/queries';
 
 // Feedback is intentionally hidden from the sidebar. The page and route
 // still exist (see App.tsx) — visit /admin/feedback directly to reach it.
 // Re-add an item below if/when patient review moderation becomes part of
 // the day-to-day admin workflow:
 //   { to: '/admin/feedback', label: 'Feedback', icon: MessageSquare },
-const navGroups = [
+type NavItem = {
+  to: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  end?: boolean;
+  badgeKey?: 'pendingReVerify';
+};
+type NavGroup = { label: string; items: NavItem[] };
+
+const navGroups: NavGroup[] = [
   {
     label: 'Overview',
     items: [
@@ -45,6 +56,12 @@ const navGroups = [
       { to: '/admin/bookings', label: 'Bookings', icon: Calendar },
       { to: '/admin/walk-in-bills', label: 'Walk-in Bills', icon: ReceiptText },
       { to: '/admin/home-collections', label: 'Home Collections', icon: Home },
+      {
+        to: '/admin/payment-verifications',
+        label: 'Payment re-verify',
+        icon: ShieldCheck,
+        badgeKey: 'pendingReVerify',
+      },
       { to: '/admin/patients', label: 'Patients', icon: Users },
     ],
   },
@@ -80,6 +97,10 @@ export function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { data: pendingReVerify = [] } = usePendingReVerifyPayments();
+  const badgeCounts: Record<string, number> = {
+    pendingReVerify: pendingReVerify.length,
+  };
 
   useEffect(() => {
     setMobileOpen(false);
@@ -131,24 +152,35 @@ export function AdminLayout() {
                 <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   {group.label}
                 </div>
-                {group.items.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.end}
-                    className={({ isActive }) =>
-                      cn(
-                        'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors',
-                        isActive
-                          ? 'bg-gradient-brand text-white shadow-sm'
-                          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-                      )
-                    }
-                  >
-                    <item.icon className="h-4 w-4" />
-                    {item.label}
-                  </NavLink>
-                ))}
+                {group.items.map((item) => {
+                  const count =
+                    'badgeKey' in item && item.badgeKey
+                      ? badgeCounts[item.badgeKey] ?? 0
+                      : 0;
+                  return (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.end}
+                      className={({ isActive }) =>
+                        cn(
+                          'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors',
+                          isActive
+                            ? 'bg-gradient-brand text-white shadow-sm'
+                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                        )
+                      }
+                    >
+                      <item.icon className="h-4 w-4" />
+                      <span className="flex-1">{item.label}</span>
+                      {count > 0 && (
+                        <span className="rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground">
+                          {count}
+                        </span>
+                      )}
+                    </NavLink>
+                  );
+                })}
               </div>
             ))}
           </nav>

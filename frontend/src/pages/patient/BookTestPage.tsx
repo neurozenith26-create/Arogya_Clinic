@@ -18,12 +18,33 @@ import { useCartStore } from '../../stores/cartStore';
 import { useAuthStore } from '../../stores/authStore';
 import { formatCurrencyINR, cn } from '../../lib/utils';
 import {
-  addBooking,
-  checkPincode,
-  generateHomeCollectionSlots,
-  generateInClinicTestSlots,
-  generateBookingCode,
-} from '../../lib/mockPhase2';
+  checkServiceablePincode,
+  useCreateTestBooking,
+  useHomeCollectionSlots,
+  type PincodeCheckResult,
+} from '../../hooks/queries';
+import { UpiPaymentModal } from '../../components/payment/UpiPaymentModal';
+
+/**
+ * Default in-clinic test slot grid for the booking flow — patients walk in
+ * across business hours (09:00-17:00, 30-min slots). Past dates are
+ * disabled. A future task can read this from `clinic_settings.business_hours`
+ * instead of being hard-coded here.
+ */
+function generateInClinicTestSlots(date: string) {
+  const slots: { time: string; available: boolean }[] = [];
+  const isPast = new Date(date) < new Date(new Date().toISOString().slice(0, 10));
+  for (let h = 9; h < 17; h++) {
+    for (let m = 0; m < 60; m += 30) {
+      slots.push({
+        time: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+        available: !isPast,
+      });
+    }
+  }
+  return slots;
+}
+import { getApiErrorMessage } from '../../lib/apiClient';
 import { patientInfoSchema } from '@arogya/shared/schemas/booking';
 import { CLINIC_FULL_NAME } from '../../config/featureFlags';
 
@@ -34,16 +55,26 @@ export default function BookTestPage() {
   const items = useCartStore((s) => s.items);
   const subtotal = useCartStore((s) => s.subtotal());
   const clearCart = useCartStore((s) => s.clear);
+  const preferredVisitType = useCartStore((s) => s.preferredVisitType);
   const user = useAuthStore((s) => s.user);
   const [step, setStep] = useState(1);
-  const [visitType, setVisitType] = useState<'in_clinic' | 'home_visit'>('in_clinic');
+  // Honour the "Book Home Visit" CTA preference from cartStore — set by the
+  // header / dashboard sidebar buttons before the patient lands here.
+  const [visitType, setVisitType] = useState<'in_clinic' | 'home_visit'>(
+    preferredVisitType ?? 'in_clinic',
+  );
   const [selectedDate, setSelectedDate] = useState(
     format(new Date(Date.now() + 86400000), 'yyyy-MM-dd'),
   );
   const [selectedSlot, setSelectedSlot] = useState<string | undefined>();
-  const [pincodeResult, setPincodeResult] = useState<ReturnType<typeof checkPincode> | null>(null);
+  const [pincodeResult, setPincodeResult] = useState<PincodeCheckResult | null>(null);
+  const [checkingPincode, setCheckingPincode] = useState(false);
+  const [pincodeError, setPincodeError] = useState<string | null>(null);
   const [agreed, setAgreed] = useState(false);
   const [instructions, setInstructions] = useState('');
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const createBookingMutation = useCreateTestBooking();
 
   const patientForm = useForm({
     resolver: zodResolver(patientInfoSchema),
@@ -69,18 +100,43 @@ export default function BookTestPage() {
     },
   });
 
-  const slots = useMemo(() => {
-    if (visitType === 'home_visit') return generateHomeCollectionSlots(selectedDate);
-    return generateInClinicTestSlots(selectedDate);
-  }, [visitType, selectedDate]);
+  // Live home-collection slots when visit_type=home_visit AND a serviceable
+  // pincode has been confirmed. For in-clinic, we still generate a default
+  // grid client-side (a future task could read clinic_settings.business_hours).
+  const liveHomeSlots = useHomeCollectionSlots(
+    selectedDate,
+    pincodeResult?.serviceable ? pincodeResult.pincode : '',
+    visitType === 'home_visit' && !!pincodeResult?.serviceable,
+  );
+  const inClinicSlots = useMemo(
+    () => (visitType === 'in_clinic' ? generateInClinicTestSlots(selectedDate) : []),
+    [visitType, selectedDate],
+  );
+  const slots =
+    visitType === 'home_visit' ? liveHomeSlots.data ?? [] : inClinicSlots;
+  const slotsLoading = visitType === 'home_visit' && liveHomeSlots.isLoading;
 
   const homeVisitCharge = visitType === 'home_visit' ? pincodeResult?.home_visit_charge ?? 0 : 0;
   const total = subtotal + homeVisitCharge;
   const advance = Math.round(total / 2);
 
-  const handlePincodeCheck = () => {
-    const p = addressForm.getValues('pincode');
-    setPincodeResult(checkPincode(p));
+  const handlePincodeCheck = async () => {
+    const p = addressForm.getValues('pincode').trim();
+    setPincodeError(null);
+    setPincodeResult(null);
+    if (!/^[1-9]\d{5}$/.test(p)) {
+      setPincodeError('Enter a valid 6-digit Indian pincode.');
+      return;
+    }
+    setCheckingPincode(true);
+    try {
+      const result = await checkServiceablePincode(p);
+      setPincodeResult(result);
+    } catch (err) {
+      setPincodeError(getApiErrorMessage(err, 'Could not check this pincode'));
+    } finally {
+      setCheckingPincode(false);
+    }
   };
 
   const goToStep2 = async () => {
@@ -97,41 +153,49 @@ export default function BookTestPage() {
     setStep(3);
   };
 
-  const confirmBooking = () => {
+  const openPaymentModal = () => {
     if (!selectedSlot) return;
+    setSubmitError(null);
+    setPaymentModalOpen(true);
+  };
+
+  const handleProofSubmit = async (proof: File, upiReference?: string) => {
+    if (!selectedSlot) return;
+    setSubmitError(null);
     const patient = patientForm.getValues();
     const address = visitType === 'home_visit' ? addressForm.getValues() : undefined;
-
-    const booking = addBooking({
-      booking_code: generateBookingCode('test_booking'),
-      booking_type: 'test_booking',
-      booking_origin: 'online',
-      visit_type: visitType,
-      patient_user_id: user?.id ?? 'patient-demo',
-      patient_snapshot: { ...patient, email: patient.email || undefined },
-      items: items.map((i) => ({
-        item_name: i.name,
-        item_type: i.is_package ? 'package' : 'test',
-        unit_price: i.price,
-        quantity: i.quantity,
-      })),
-      scheduled_date: selectedDate,
-      scheduled_start_time: selectedSlot,
-      delivery_address: address,
-      subtotal_amount: subtotal,
-      home_visit_charge: homeVisitCharge,
-      total_amount: total,
-      advance_amount: advance,
-      balance_amount: total - advance,
-      booking_status: 'pending_payment',
-      payment_status: 'pending',
-      collection_status: visitType === 'home_visit' ? 'not_assigned' : 'not_required',
-      special_instructions: instructions || undefined,
-      created_at: new Date().toISOString(),
-    });
-
-    clearCart();
-    navigate(`/payment/callback?booking_id=${booking.id}`);
+    try {
+      const booking = await createBookingMutation.mutateAsync({
+        payload: {
+          // pg returns BIGSERIAL/NUMERIC as strings; cartStore stores whatever
+          // GET /services gave it. Coerce here so the wire payload is clean
+          // (backend Zod also coerces — belt + suspenders).
+          items: items.map((i) => ({
+            service_id: Number(i.service_id),
+            quantity: Number(i.quantity),
+          })),
+          visit_type: visitType,
+          scheduled_date: selectedDate,
+          scheduled_start_time: selectedSlot,
+          patient_snapshot: {
+            ...patient,
+            email: patient.email || undefined,
+          },
+          delivery_address: address,
+          home_visit_charge: Number(homeVisitCharge) || 0,
+          special_instructions: instructions || undefined,
+        },
+        proof,
+        upi_reference: upiReference,
+      });
+      clearCart();
+      setPaymentModalOpen(false);
+      navigate(`/payment/callback?booking_id=${booking.id}&booking_code=${booking.booking_code}`);
+    } catch (err) {
+      const msg = getApiErrorMessage(err, 'Could not create your booking. Please try again.');
+      setSubmitError(msg);
+      throw new Error(msg);
+    }
   };
 
   if (items.length === 0) {
@@ -302,17 +366,28 @@ export default function BookTestPage() {
                             maxLength={6}
                             {...addressForm.register('pincode')}
                           />
-                          <Button type="button" onClick={handlePincodeCheck}>
-                            Check
+                          <Button
+                            type="button"
+                            onClick={handlePincodeCheck}
+                            disabled={checkingPincode}
+                          >
+                            {checkingPincode ? 'Checking…' : 'Check'}
                           </Button>
                         </div>
+                        {pincodeError && (
+                          <p className="mt-2 inline-flex items-center gap-1 text-xs text-destructive">
+                            <AlertCircle className="h-3.5 w-3.5" />
+                            {pincodeError}
+                          </p>
+                        )}
                         {pincodeResult &&
                           (pincodeResult.serviceable ? (
                             <p className="mt-2 inline-flex items-center gap-1 text-xs text-green-700">
                               <CheckCircle2 className="h-3.5 w-3.5" />
-                              Available in {pincodeResult.city} · Charge:{' '}
+                              Available
+                              {pincodeResult.city ? ` in ${pincodeResult.city}` : ''} · Charge:{' '}
                               {formatCurrencyINR(pincodeResult.home_visit_charge ?? 0)} · Earliest
-                              collection in {pincodeResult.lead_time_hours}h
+                              collection in {pincodeResult.collection_lead_time_hours ?? 4}h
                             </p>
                           ) : (
                             <p className="mt-2 inline-flex items-center gap-1 text-xs text-destructive">
@@ -364,7 +439,17 @@ export default function BookTestPage() {
                   <div>
                     <Label>Select time slot</Label>
                     <div className="mt-2">
-                      <SlotGrid slots={slots} value={selectedSlot} onChange={setSelectedSlot} />
+                      {slotsLoading ? (
+                        <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                          Loading available slots…
+                        </p>
+                      ) : visitType === 'home_visit' && !pincodeResult?.serviceable ? (
+                        <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                          Enter a serviceable pincode to see home-collection slots.
+                        </p>
+                      ) : (
+                        <SlotGrid slots={slots} value={selectedSlot} onChange={setSelectedSlot} />
+                      )}
                     </div>
                   </div>
 
@@ -445,6 +530,12 @@ export default function BookTestPage() {
                     </span>
                   </label>
 
+                  {submitError && (
+                    <div className="rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive">
+                      {submitError}
+                    </div>
+                  )}
+
                   <div className="flex justify-between">
                     <Button type="button" variant="ghost" onClick={() => setStep(2)}>
                       <ArrowLeft className="mr-1 h-4 w-4" /> Back
@@ -452,10 +543,12 @@ export default function BookTestPage() {
                     <Button
                       type="button"
                       size="lg"
-                      disabled={!agreed}
-                      onClick={confirmBooking}
+                      disabled={!agreed || createBookingMutation.isPending}
+                      onClick={openPaymentModal}
                     >
-                      Pay {formatCurrencyINR(advance)} Advance
+                      {createBookingMutation.isPending
+                        ? 'Creating booking…'
+                        : `Pay ${formatCurrencyINR(advance)} Advance`}
                     </Button>
                   </div>
                 </CardContent>
@@ -474,7 +567,15 @@ export default function BookTestPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Home visit charge</span>
-                <span>{homeVisitCharge > 0 ? formatCurrencyINR(homeVisitCharge) : '—'}</span>
+                <span>
+                  {visitType !== 'home_visit'
+                    ? '—'
+                    : homeVisitCharge > 0
+                      ? formatCurrencyINR(homeVisitCharge)
+                      : pincodeResult?.serviceable
+                        ? formatCurrencyINR(0)
+                        : 'Enter pincode'}
+                </span>
               </div>
               <div className="border-t pt-3">
                 <div className="flex justify-between text-base font-semibold">
@@ -490,6 +591,15 @@ export default function BookTestPage() {
           </Card>
         </div>
       </section>
+
+      <UpiPaymentModal
+        isOpen={paymentModalOpen}
+        onClose={() => setPaymentModalOpen(false)}
+        amount={advance}
+        bookingRef={`TST-${selectedDate}-${(selectedSlot ?? '').slice(0, 5)}`}
+        onSubmit={handleProofSubmit}
+        submitting={createBookingMutation.isPending}
+      />
     </>
   );
 }

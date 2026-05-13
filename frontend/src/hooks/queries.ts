@@ -77,6 +77,7 @@ export const BOOKING_STATUS_PATIENT_LABELS: Record<EditableBookingStatus, string
 export interface AdminBookingFilters {
   type?: 'doctor_appointment' | 'test_booking';
   origin?: 'online' | 'walk_in';
+  visit_type?: 'in_clinic' | 'home_visit';
   status?: string;
   q?: string;
 }
@@ -295,6 +296,28 @@ export interface AdminBookingRow {
   items_summary: string | null;
 }
 
+export interface AdminPaymentRow {
+  id: number;
+  payment_source: 'razorpay' | 'offline' | 'upi_manual';
+  amount: number;
+  currency: string;
+  payment_method: string | null;
+  payment_status: string;
+  payment_type: string;
+  captured_at: string | null;
+  refunded_amount: number;
+  notes: string | null;
+  created_at: string;
+  // Manual-UPI specifics (NULL on razorpay / offline rows):
+  upi_reference: string | null;
+  verified_at: string | null;
+  verified_by_user_id: string | null;
+  verification_notes: string | null;
+  payment_proof_mime: string | null;
+  proof_url: string | null;
+  verified_by_name: string | null;
+}
+
 export interface AdminBookingDetail extends AdminBookingRow {
   doctor_speciality: string | null;
   doctor_center: string | null;
@@ -311,19 +334,7 @@ export interface AdminBookingDetail extends AdminBookingRow {
     unit_price: number;
     total_price: number;
   }>;
-  payments: Array<{
-    id: number;
-    payment_source: 'razorpay' | 'offline';
-    amount: number;
-    currency: string;
-    payment_method: string | null;
-    payment_status: string;
-    payment_type: string;
-    captured_at: string | null;
-    refunded_amount: number;
-    notes: string | null;
-    created_at: string;
-  }>;
+  payments: Array<AdminPaymentRow>;
   reports: Array<{
     id: number;
     file_name: string;
@@ -342,6 +353,7 @@ export function useAdminBookings(filters?: AdminBookingFilters) {
       const params = new URLSearchParams();
       if (filters?.type) params.set('type', filters.type);
       if (filters?.origin) params.set('origin', filters.origin);
+      if (filters?.visit_type) params.set('visit_type', filters.visit_type);
       if (filters?.status) params.set('status', filters.status);
       if (filters?.q) params.set('q', filters.q);
       const { data } = await api.get<{ data: AdminBookingRow[] }>(
@@ -1175,6 +1187,19 @@ export interface MyBookingDetail extends MyBookingRow {
     version: number;
     uploaded_at: string;
   }>;
+  payments: Array<{
+    id: number;
+    payment_source: 'razorpay' | 'offline' | 'upi_manual';
+    amount: number;
+    payment_status: string;
+    payment_type: string;
+    payment_method: string | null;
+    captured_at: string | null;
+    upi_reference: string | null;
+    verified_at: string | null;
+    payment_proof_mime: string | null;
+    proof_url: string | null;
+  }>;
 }
 
 export function useMyBookings() {
@@ -1322,6 +1347,324 @@ export async function lookupBookingByCode(code: string): Promise<BookingLookupRe
   return data.data;
 }
 
+// ─── Patient: home-collection serviceability + slot picker + booking ─────
+
+export interface PincodeCheckResult {
+  serviceable: boolean;
+  pincode: string;
+  city?: string | null;
+  state?: string | null;
+  zone?: string | null;
+  home_visit_charge?: number;
+  collection_lead_time_hours?: number;
+}
+
+/**
+ * Public pincode check used by the patient booking flow. Returns
+ * `serviceable: false` for non-Indian-format pincodes OR pincodes that don't
+ * appear in the active `serviceable_pincodes` list — never throws.
+ */
+export async function checkServiceablePincode(pincode: string): Promise<PincodeCheckResult> {
+  const trimmed = pincode.trim();
+  const { data } = await api.get<{ data: PincodeCheckResult }>(
+    `/serviceable-pincodes/check?pincode=${encodeURIComponent(trimmed)}`,
+  );
+  return data.data;
+}
+
+export interface SlotRow {
+  time: string;
+  available: boolean;
+  reason?: 'booked' | 'blocked';
+}
+
+/**
+ * Home-collection slot grid for a given date+pincode. Backend currently
+ * returns a hardcoded 8-slot stub; once the real generator is wired against
+ * clinic_settings.home_collection_schedule, this hook keeps the same shape.
+ */
+export function useHomeCollectionSlots(date: string, pincode: string, enabled = true) {
+  return useQuery({
+    queryKey: ['home-collection-slots', date, pincode],
+    enabled: enabled && !!date && /^[1-9]\d{5}$/.test(pincode),
+    queryFn: async () => {
+      const { data } = await api.get<{ data: { date: string; slots: SlotRow[] } }>(
+        `/home-collection/slots?date=${encodeURIComponent(date)}&pincode=${encodeURIComponent(pincode)}`,
+      );
+      return data.data.slots;
+    },
+  });
+}
+
+/**
+ * Live doctor-slot grid for a given date. Backend reads
+ * `doctor_centers.schedule` JSONB, subtracts existing bookings, subtracts
+ * doctor_unavailability — see modules/phase2/phase2Routes.ts.
+ */
+export function useDoctorSlots(
+  doctorId: string | undefined,
+  date: string,
+  centerId?: number,
+  visitType: 'in_clinic' | 'home_visit' = 'in_clinic',
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['doctor-slots', doctorId, date, centerId, visitType],
+    enabled: enabled && !!doctorId && !!date,
+    queryFn: async () => {
+      const params = new URLSearchParams({ date, visit_type: visitType });
+      if (centerId) params.set('center_id', String(centerId));
+      const { data } = await api.get<{ data: { slots: SlotRow[] } }>(
+        `/doctors/${doctorId}/slots?${params.toString()}`,
+      );
+      return data.data.slots;
+    },
+  });
+}
+
+export interface DoctorAppointmentBookingInput {
+  doctor_id: string;
+  doctor_center_id: number;
+  visit_type: 'in_clinic' | 'home_visit';
+  scheduled_date: string;
+  scheduled_start_time: string;
+  patient_snapshot: Record<string, unknown>;
+  reason_for_visit?: string;
+}
+
+export interface BookingCreatedResponse {
+  id: number;
+  booking_code: string;
+  payment_id?: number;
+}
+
+/**
+ * Manual-UPI bookings always carry the payment proof (screenshot or PDF) as
+ * a multipart `payment_proof` field plus a JSON-string `data` field — the
+ * backend rejects the request without it. See migration 0024 / phase2Routes.
+ */
+export function useCreateDoctorBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: {
+      payload: DoctorAppointmentBookingInput;
+      proof: File;
+      upi_reference?: string;
+    }) => {
+      const fd = new FormData();
+      fd.append(
+        'data',
+        JSON.stringify({
+          ...args.payload,
+          upi_reference: args.upi_reference,
+        }),
+      );
+      if (args.upi_reference) fd.append('upi_reference', args.upi_reference);
+      fd.append('payment_proof', args.proof);
+      const { data } = await api.post<{ data: BookingCreatedResponse }>(
+        '/bookings/doctor-appointment',
+        fd,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      return data.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.myBookings });
+      qc.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'payments', 'pending-re-verify'] });
+    },
+  });
+}
+
+export interface TestBookingInput {
+  items: Array<{ service_id: number; quantity: number }>;
+  visit_type: 'in_clinic' | 'home_visit';
+  scheduled_date: string;
+  scheduled_start_time: string;
+  patient_snapshot: Record<string, unknown>;
+  delivery_address?: Record<string, unknown>;
+  home_visit_charge?: number;
+  special_instructions?: string;
+}
+
+export function useCreateTestBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: {
+      payload: TestBookingInput;
+      proof: File;
+      upi_reference?: string;
+    }) => {
+      const fd = new FormData();
+      fd.append(
+        'data',
+        JSON.stringify({
+          ...args.payload,
+          upi_reference: args.upi_reference,
+        }),
+      );
+      if (args.upi_reference) fd.append('upi_reference', args.upi_reference);
+      fd.append('payment_proof', args.proof);
+      const { data } = await api.post<{ data: BookingCreatedResponse }>(
+        '/bookings/test',
+        fd,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      return data.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.myBookings });
+      qc.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'payments', 'pending-re-verify'] });
+    },
+  });
+}
+
+// ─── Clinic UPI + manual-UPI proof re-verification ───────────────────────
+
+export interface ClinicUpi {
+  upi_id: string;
+  upi_display_name: string;
+}
+
+export function useClinicUpi() {
+  return useQuery({
+    queryKey: ['clinic', 'upi'],
+    staleTime: Infinity,
+    queryFn: async () => {
+      const { data } = await api.get<{ data: ClinicUpi }>('/clinic/upi');
+      return data.data;
+    },
+  });
+}
+
+/**
+ * Build a UPI deep link the patient scans (or taps on mobile) to pay the
+ * clinic. Format ref: https://developers.google.com/pay/india/api/web/create-payment-method
+ */
+export function buildUpiPaymentLink(
+  clinic: ClinicUpi,
+  amount: number,
+  bookingRef: string,
+): string {
+  const params = new URLSearchParams({
+    pa: clinic.upi_id,
+    pn: clinic.upi_display_name,
+    am: amount.toFixed(2),
+    cu: 'INR',
+    tn: `Arogya-${bookingRef}`.slice(0, 50),
+  });
+  return `upi://pay?${params.toString()}`;
+}
+
+export interface PendingReVerifyRow {
+  payment_id: number;
+  amount: number;
+  upi_reference: string | null;
+  payment_proof_mime: string | null;
+  submitted_at: string;
+  booking_id: number;
+  booking_code: string;
+  booking_type: 'doctor_appointment' | 'test_booking';
+  booking_origin: 'online' | 'walk_in';
+  visit_type: 'in_clinic' | 'home_visit';
+  scheduled_date: string | null;
+  scheduled_start_time: string | null;
+  patient_snapshot: {
+    first_name?: string;
+    last_name?: string;
+    mobile?: string;
+    email?: string | null;
+  } | null;
+  total_amount: string;
+  advance_amount: string;
+  balance_amount: string;
+  booking_status: string;
+  payment_status: string;
+}
+
+export function usePendingReVerifyPayments() {
+  return useQuery({
+    queryKey: ['admin', 'payments', 'pending-re-verify'],
+    queryFn: async () => {
+      const { data } = await api.get<{ data: PendingReVerifyRow[] }>(
+        '/admin/payments/pending-re-verify',
+      );
+      return data.data;
+    },
+  });
+}
+
+export function useReVerifyPayment(paymentId: number, bookingId?: number | string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (notes?: string) => {
+      const { data } = await api.post<{
+        data: {
+          id: number;
+          booking_id: number;
+          verified_at: string | null;
+          verified_by_user_id: string | null;
+        };
+      }>(`/admin/payments/${paymentId}/re-verify`, { notes });
+      return data.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'payments', 'pending-re-verify'] });
+      if (bookingId !== undefined) {
+        qc.invalidateQueries({ queryKey: qk.adminBooking(bookingId) });
+        qc.invalidateQueries({ queryKey: qk.myBooking(bookingId) });
+      }
+      qc.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+      qc.invalidateQueries({ queryKey: qk.myBookings });
+    },
+  });
+}
+
+/**
+ * Resolve a proof_url returned from the API (e.g. `/api/v1/admin/payments/42/proof`)
+ * into a fully-qualified browser-loadable URL that respects VITE_API_URL.
+ */
+export function resolvePaymentProofUrl(proofUrl: string | null | undefined): string | null {
+  if (!proofUrl) return null;
+  if (/^https?:\/\//.test(proofUrl)) return proofUrl;
+  const apiBase = (import.meta.env.VITE_API_URL ?? '/api/v1').replace(/\/$/, '');
+  // proof_url already includes the `/api/v1` prefix on the server. If the
+  // dev base is also `/api/v1`, strip the duplicate. If the env points at an
+  // absolute origin (`http://localhost:4000/api/v1`), join it cleanly.
+  if (proofUrl.startsWith('/api/v1') && apiBase.endsWith('/api/v1')) {
+    return apiBase + proofUrl.slice('/api/v1'.length);
+  }
+  return apiBase + (proofUrl.startsWith('/') ? '' : '/') + proofUrl;
+}
+
+/**
+ * STUB. Triggers the backend payment-confirmation endpoint that stands in
+ * for Razorpay's webhook until that's wired. Idempotent on the backend, so
+ * it's safe to fire on every PaymentCallbackPage mount.
+ */
+export function useConfirmPaymentStub() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (bookingId: number | string) => {
+      const { data } = await api.post<{
+        data: {
+          id: number;
+          booking_code: string;
+          booking_status: string;
+          payment_status: string;
+        };
+      }>(`/bookings/${bookingId}/confirm-payment-stub`);
+      return data.data;
+    },
+    onSuccess: (_, bookingId) => {
+      qc.invalidateQueries({ queryKey: qk.myBookings });
+      qc.invalidateQueries({ queryKey: qk.myBooking(bookingId) });
+      qc.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+    },
+  });
+}
+
 export interface MyReport {
   id: number;
   file_name: string;
@@ -1374,6 +1717,7 @@ export async function downloadInvoicePdf(bookingId: number | string, bookingCode
 export interface AdminInvoiceFilters {
   type?: 'doctor_appointment' | 'test_booking';
   origin?: 'online' | 'walk_in';
+  visit_type?: 'in_clinic' | 'home_visit';
   from?: string;
   to?: string;
   q?: string;
@@ -1388,6 +1732,7 @@ export interface AdminInvoiceRow {
   booking_code: string;
   booking_type: 'doctor_appointment' | 'test_booking';
   booking_origin: 'online' | 'walk_in';
+  visit_type: 'in_clinic' | 'home_visit';
   payment_status: string;
   advance_amount: string;
   balance_amount: string;
@@ -1406,6 +1751,7 @@ export function useAdminInvoices(filters?: AdminInvoiceFilters) {
       const params = new URLSearchParams();
       if (filters?.type) params.set('type', filters.type);
       if (filters?.origin) params.set('origin', filters.origin);
+      if (filters?.visit_type) params.set('visit_type', filters.visit_type);
       if (filters?.from) params.set('from', filters.from);
       if (filters?.to) params.set('to', filters.to);
       if (filters?.q) params.set('q', filters.q);
@@ -1415,6 +1761,28 @@ export function useAdminInvoices(filters?: AdminInvoiceFilters) {
       return data.data;
     },
   });
+}
+
+/**
+ * Patient self-download of own booking invoice. Returns the file as a Blob
+ * and triggers a download — same shape as the admin `downloadInvoicePdf`,
+ * but hits the patient-scoped endpoint.
+ */
+export async function downloadMyInvoicePdf(
+  bookingId: number | string,
+  bookingCode: string,
+): Promise<void> {
+  const resp = await api.get<Blob>(`/bookings/${bookingId}/invoice.pdf`, {
+    responseType: 'blob',
+  });
+  const url = URL.createObjectURL(resp.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `invoice-${bookingCode}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export type { UseQueryOptions };

@@ -168,6 +168,28 @@ router.get('/departments/:slug', async (req, res, next) => {
   }
 });
 
+// ─── Clinic UPI (public — VPA is public-by-design, like a phone number) ────────
+
+router.get('/clinic/upi', async (_req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT key, value FROM clinic_settings WHERE key IN ('upi_id', 'upi_display_name')`,
+    );
+    const map = new Map<string, unknown>();
+    for (const row of result.rows) {
+      map.set(row.key, row.value);
+    }
+    const upiId = (map.get('upi_id') as string | undefined) ?? '';
+    const displayName = (map.get('upi_display_name') as string | undefined) ?? 'Arogya Diagnostics';
+    if (!upiId) {
+      throw new HttpError(503, 'Clinic UPI not configured', 'UPI_NOT_CONFIGURED');
+    }
+    res.json({ data: { upi_id: upiId, upi_display_name: displayName } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ─── Enquiries ──────────────────────────────────────────────────────────────────
 
 const enquirySchema = z.object({

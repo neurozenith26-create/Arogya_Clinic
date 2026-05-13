@@ -16,9 +16,17 @@ export interface CartItem {
 
 interface CartState {
   items: CartItem[];
+  /**
+   * Set when the patient enters the booking flow via the "Book Home Visit"
+   * CTA — survives navigation through ServicesPage / CartPage so BookTestPage
+   * can pre-select home_visit. `undefined` means no preference; BookTestPage
+   * falls back to in-clinic.
+   */
+  preferredVisitType?: 'in_clinic' | 'home_visit';
   addItem: (service: MockService) => void;
   removeItem: (serviceId: number) => void;
   updateQuantity: (serviceId: number, quantity: number) => void;
+  setPreferredVisitType: (v: 'in_clinic' | 'home_visit' | undefined) => void;
   clear: () => void;
   subtotal: () => number;
   count: () => number;
@@ -28,6 +36,8 @@ export const useCartStore = create<CartState>()(
   persist(
     (set, get) => ({
       items: [],
+      preferredVisitType: undefined,
+      setPreferredVisitType: (v) => set({ preferredVisitType: v }),
       addItem: (service) => {
         const existing = get().items.find((i) => i.service_id === service.id);
         if (existing) {
@@ -68,7 +78,7 @@ export const useCartStore = create<CartState>()(
           ),
         });
       },
-      clear: () => set({ items: [] }),
+      clear: () => set({ items: [], preferredVisitType: undefined }),
       subtotal: () => get().items.reduce((sum, i) => sum + i.price * i.quantity, 0),
       count: () => get().items.reduce((sum, i) => sum + i.quantity, 0),
     }),

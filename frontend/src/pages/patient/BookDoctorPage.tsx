@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useForm } from 'react-hook-form';
@@ -15,17 +15,17 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { WizardSteps } from '../../components/booking/WizardSteps';
 import { DateStrip } from '../../components/booking/DateStrip';
 import { SlotGrid } from '../../components/booking/SlotGrid';
-import { useDoctor } from '../../hooks/queries';
+import {
+  useCreateDoctorBooking,
+  useDoctor,
+  useDoctorSlots,
+} from '../../hooks/queries';
 import { useAuthStore } from '../../stores/authStore';
 import { formatCurrencyINR } from '../../lib/utils';
-import {
-  addBooking,
-  doctorConsultationItem,
-  generateDoctorSlots,
-  generateBookingCode,
-} from '../../lib/mockPhase2';
+import { getApiErrorMessage } from '../../lib/apiClient';
 import { patientInfoSchema } from '@arogya/shared/schemas/booking';
 import { CLINIC_FULL_NAME } from '../../config/featureFlags';
+import { UpiPaymentModal } from '../../components/payment/UpiPaymentModal';
 
 const stepLabels = ['Date & Time', 'Patient Info', 'Confirm & Pay'];
 
@@ -42,6 +42,13 @@ export default function BookDoctorPage() {
   const [agreed, setAgreed] = useState(false);
   const [lockExpiresAt, setLockExpiresAt] = useState<number | null>(null);
   const [lockRemaining, setLockRemaining] = useState(0);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const createBookingMutation = useCreateDoctorBooking();
+  // Resolve the doctor's primary center (admin can add more later — for now
+  // the booking flow uses the first active center on the profile).
+  const primaryCenter = doctor?.centers?.[0];
+  const liveSlots = useDoctorSlots(doctor?.id, selectedDate, primaryCenter?.id);
 
   const form = useForm({
     resolver: zodResolver(patientInfoSchema),
@@ -56,10 +63,8 @@ export default function BookDoctorPage() {
     },
   });
 
-  const slots = useMemo(
-    () => (doctor ? generateDoctorSlots(doctor, selectedDate) : []),
-    [doctor, selectedDate],
-  );
+  const slots = liveSlots.data ?? [];
+  const slotsLoading = liveSlots.isLoading;
 
   // 10-minute slot lock countdown
   useEffect(() => {
@@ -95,38 +100,39 @@ export default function BookDoctorPage() {
     if (ok) setStep(3);
   };
 
-  const confirmBooking = () => {
-    if (!doctor || !selectedSlot) return;
+  const openPaymentModal = () => {
+    if (!doctor || !selectedSlot || !primaryCenter) return;
+    setSubmitError(null);
+    setPaymentModalOpen(true);
+  };
+
+  const handleProofSubmit = async (proof: File, upiReference?: string) => {
+    if (!doctor || !selectedSlot || !primaryCenter) return;
+    setSubmitError(null);
     const values = form.getValues();
-    const item = doctorConsultationItem(doctor);
-    const total = doctor.consultation_fee;
-    const advance = Math.round(total / 2);
-    const booking = addBooking({
-      booking_code: generateBookingCode('doctor_appointment'),
-      booking_type: 'doctor_appointment',
-      booking_origin: 'online',
-      visit_type: 'in_clinic',
-      patient_user_id: user?.id ?? 'patient-demo',
-      patient_snapshot: { ...values, email: values.email || undefined },
-      doctor_user_id: doctor.id,
-      doctor_name: doctor.display_name,
-      doctor_speciality: doctor.speciality,
-      doctor_center: doctor.centers[0]?.center_name,
-      items: [item],
-      scheduled_date: selectedDate,
-      scheduled_start_time: selectedSlot,
-      subtotal_amount: total,
-      home_visit_charge: 0,
-      total_amount: total,
-      advance_amount: advance,
-      balance_amount: total - advance,
-      booking_status: 'pending_payment',
-      payment_status: 'pending',
-      collection_status: 'not_required',
-      reason_for_visit: reason || undefined,
-      created_at: new Date().toISOString(),
-    });
-    navigate(`/payment/callback?booking_id=${booking.id}`);
+    try {
+      const booking = await createBookingMutation.mutateAsync({
+        payload: {
+          doctor_id: doctor.id,
+          // doctor_centers.id is BIGSERIAL → pg returns it as a string. Coerce
+          // at the boundary so the wire type matches the API contract.
+          doctor_center_id: Number(primaryCenter.id),
+          visit_type: 'in_clinic',
+          scheduled_date: selectedDate,
+          scheduled_start_time: selectedSlot,
+          patient_snapshot: { ...values, email: values.email || undefined },
+          reason_for_visit: reason || undefined,
+        },
+        proof,
+        upi_reference: upiReference,
+      });
+      setPaymentModalOpen(false);
+      navigate(`/payment/callback?booking_id=${booking.id}&booking_code=${booking.booking_code}`);
+    } catch (err) {
+      const msg = getApiErrorMessage(err, 'Could not create your booking. Please try again.');
+      setSubmitError(msg);
+      throw new Error(msg);
+    }
   };
 
   if (isLoading) {
@@ -148,7 +154,22 @@ export default function BookDoctorPage() {
     );
   }
 
-  const center = doctor.centers[0];
+  const center = doctor.centers?.[0];
+  // Without a configured consulting center we can't satisfy the backend's
+  // doctor_center_id requirement on POST /bookings/doctor-appointment.
+  if (!center) {
+    return (
+      <div className="container py-16 text-center">
+        <h1 className="text-2xl font-bold">Booking not available</h1>
+        <p className="mt-2 text-muted-foreground">
+          This doctor has no consulting centers configured yet. Please call us to book.
+        </p>
+        <Button asChild className="mt-6">
+          <Link to={`/doctors/${doctor.id}`}>Back to doctor profile</Link>
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -187,11 +208,11 @@ export default function BookDoctorPage() {
             <div className="text-right">
               <div className="text-xs text-muted-foreground">Consultation fee</div>
               <div className="text-2xl font-bold text-primary">
-                {formatCurrencyINR(doctor.consultation_fee)}
+                {formatCurrencyINR(Number(doctor.consultation_fee))}
               </div>
               <div className="mt-1 inline-flex items-center gap-1 text-xs">
                 <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                {doctor.rating_avg.toFixed(1)} ({doctor.rating_count})
+                {Number(doctor.rating_avg).toFixed(1)} ({doctor.rating_count})
               </div>
             </div>
           </CardContent>
@@ -226,7 +247,17 @@ export default function BookDoctorPage() {
               <div>
                 <Label>Select time slot</Label>
                 <div className="mt-2">
-                  <SlotGrid slots={slots} value={selectedSlot} onChange={setSelectedSlot} />
+                  {slotsLoading ? (
+                    <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                      Loading available slots…
+                    </p>
+                  ) : slots.length === 0 ? (
+                    <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                      No slots available for this date. Try another date.
+                    </p>
+                  ) : (
+                    <SlotGrid slots={slots} value={selectedSlot} onChange={setSelectedSlot} />
+                  )}
                 </div>
               </div>
               <div className="flex justify-end">
@@ -345,28 +376,32 @@ export default function BookDoctorPage() {
                 </div>
               </div>
 
-              <div className="space-y-2 rounded-md border p-4">
-                <div className="flex justify-between text-sm">
-                  <span>Consultation fee</span>
-                  <span>{formatCurrencyINR(doctor.consultation_fee)}</span>
-                </div>
-                <div className="flex justify-between border-t pt-2 text-base font-semibold">
-                  <span>Total</span>
-                  <span className="text-primary">
-                    {formatCurrencyINR(doctor.consultation_fee)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <Badge variant="default">Pay 50% advance now</Badge>
-                  <span className="font-semibold text-primary">
-                    {formatCurrencyINR(Math.round(doctor.consultation_fee / 2))}
-                  </span>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Remaining {formatCurrencyINR(doctor.consultation_fee - Math.round(doctor.consultation_fee / 2))}{' '}
-                  collected at the time of consultation.
-                </div>
-              </div>
+              {(() => {
+                const fee = Number(doctor.consultation_fee);
+                const advance = Math.round(fee / 2);
+                return (
+                  <div className="space-y-2 rounded-md border p-4">
+                    <div className="flex justify-between text-sm">
+                      <span>Consultation fee</span>
+                      <span>{formatCurrencyINR(fee)}</span>
+                    </div>
+                    <div className="flex justify-between border-t pt-2 text-base font-semibold">
+                      <span>Total</span>
+                      <span className="text-primary">{formatCurrencyINR(fee)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <Badge variant="default">Pay 50% advance now</Badge>
+                      <span className="font-semibold text-primary">
+                        {formatCurrencyINR(advance)}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Remaining {formatCurrencyINR(fee - advance)} collected at the time
+                      of consultation.
+                    </div>
+                  </div>
+                );
+              })()}
 
               <label className="flex items-start gap-2 text-sm">
                 <input
@@ -381,18 +416,40 @@ export default function BookDoctorPage() {
                 </span>
               </label>
 
+              {submitError && (
+                <div className="rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive">
+                  {submitError}
+                </div>
+              )}
+
               <div className="flex justify-between">
                 <Button type="button" variant="ghost" onClick={() => setStep(2)}>
                   <ArrowLeft className="mr-1 h-4 w-4" /> Back
                 </Button>
-                <Button type="button" size="lg" disabled={!agreed} onClick={confirmBooking}>
-                  Pay {formatCurrencyINR(Math.round(doctor.consultation_fee / 2))} Advance
+                <Button
+                  type="button"
+                  size="lg"
+                  disabled={!agreed || createBookingMutation.isPending}
+                  onClick={openPaymentModal}
+                >
+                  {createBookingMutation.isPending
+                    ? 'Creating booking…'
+                    : `Pay ${formatCurrencyINR(Math.round(Number(doctor.consultation_fee) / 2))} Advance`}
                 </Button>
               </div>
             </CardContent>
           </Card>
         )}
       </section>
+
+      <UpiPaymentModal
+        isOpen={paymentModalOpen}
+        onClose={() => setPaymentModalOpen(false)}
+        amount={Math.round(Number(doctor.consultation_fee) / 2)}
+        bookingRef={`DOC-${selectedDate}-${(selectedSlot ?? '').slice(0, 5)}`}
+        onSubmit={handleProofSubmit}
+        submitting={createBookingMutation.isPending}
+      />
     </>
   );
 }

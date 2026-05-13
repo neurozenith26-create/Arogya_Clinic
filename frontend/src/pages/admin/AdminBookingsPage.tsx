@@ -8,6 +8,7 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { DataTable, type Column } from '../../components/admin/DataTable';
 import { useAdminBookings, type AdminBookingRow } from '../../hooks/queries';
 import { BookingStatusSelect } from '../../components/admin/BookingStatusSelect';
+import { BookingOriginPill } from '../../components/shared/BookingOriginPill';
 import { formatCurrencyINR } from '../../lib/utils';
 
 export default function AdminBookingsPage() {
@@ -16,10 +17,12 @@ export default function AdminBookingsPage() {
   const [filterType, setFilterType] = useState<'all' | 'doctor_appointment' | 'test_booking'>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterOrigin, setFilterOrigin] = useState<'all' | 'online' | 'walk_in'>('all');
+  const [filterVisit, setFilterVisit] = useState<'all' | 'in_clinic' | 'home_visit'>('all');
 
   const { data: bookings = [], isLoading } = useAdminBookings({
     type: filterType === 'all' ? undefined : filterType,
     origin: filterOrigin === 'all' ? undefined : filterOrigin,
+    visit_type: filterVisit === 'all' ? undefined : filterVisit,
     status: filterStatus === 'all' ? undefined : filterStatus,
     q: search || undefined,
   });
@@ -31,9 +34,13 @@ export default function AdminBookingsPage() {
       render: (b) => (
         <div>
           <div className="font-mono text-xs">{b.booking_code}</div>
-          <Badge variant="outline" className="mt-0.5 text-[10px]">
-            {b.booking_origin === 'walk_in' ? 'Walk-in' : 'Online'}
-          </Badge>
+          <div className="mt-1">
+            <BookingOriginPill
+              origin={b.booking_origin}
+              visitType={b.visit_type}
+              compact
+            />
+          </div>
         </div>
       ),
     },
@@ -123,7 +130,7 @@ export default function AdminBookingsPage() {
         <CardHeader>
           <CardTitle className="text-base">Filters</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Input
             placeholder="Search code, name, mobile..."
             value={search}
@@ -157,8 +164,17 @@ export default function AdminBookingsPage() {
             className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
           >
             <option value="all">All origins</option>
-            <option value="online">Online only</option>
+            <option value="online">Online (pre-booked)</option>
             <option value="walk_in">Walk-in only</option>
+          </select>
+          <select
+            value={filterVisit}
+            onChange={(e) => setFilterVisit(e.target.value as never)}
+            className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="all">All visit types</option>
+            <option value="in_clinic">In-clinic only</option>
+            <option value="home_visit">Home collection only</option>
           </select>
         </CardContent>
       </Card>
