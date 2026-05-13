@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import { api } from '../lib/apiClient';
 import {
@@ -55,8 +56,9 @@ export const BOOKING_STATUS_LABELS: Record<EditableBookingStatus, string> = {
  */
 export const BOOKING_STATUS_DESCRIPTIONS: Record<EditableBookingStatus, string> = {
   pending_payment: 'Payment is pending. Booking is held but not yet confirmed.',
-  confirmed: 'Payment received and slot is locked. Patient is expected.',
-  in_progress: 'Patient has arrived / sample is being processed.',
+  confirmed: 'Payment re-verified in person and slot is locked. Patient is expected.',
+  in_progress:
+    'Patient uploaded UPI proof — slot is reserved, but admin has not yet re-verified the payment in person. Flips to Confirmed automatically after Re-verify proof.',
   completed: 'Service delivered and reports/invoice are ready.',
   cancelled: 'Booking was cancelled and the slot is released.',
   no_show: 'Patient did not arrive within the scheduled window.',
@@ -1624,6 +1626,10 @@ export function useReVerifyPayment(paymentId: number, bookingId?: number | strin
 /**
  * Resolve a proof_url returned from the API (e.g. `/api/v1/admin/payments/42/proof`)
  * into a fully-qualified browser-loadable URL that respects VITE_API_URL.
+ *
+ * NOTE: the resolved URL still requires JWT auth. Browsers cannot attach the
+ * Authorization header on `<img src>` requests, so use `useProofBlobUrl()` to
+ * fetch through the axios client and render the resulting blob URL instead.
  */
 export function resolvePaymentProofUrl(proofUrl: string | null | undefined): string | null {
   if (!proofUrl) return null;
@@ -1636,6 +1642,58 @@ export function resolvePaymentProofUrl(proofUrl: string | null | undefined): str
     return apiBase + proofUrl.slice('/api/v1'.length);
   }
   return apiBase + (proofUrl.startsWith('/') ? '' : '/') + proofUrl;
+}
+
+/**
+ * Fetches an auth-protected file through the axios client (which attaches the
+ * JWT via interceptor) and returns a same-origin `blob:` URL the browser can
+ * use as an `<img src>` or `<embed src>`. Passes through `blob:`/`data:` URLs
+ * untouched (used by UpiPaymentModal for the not-yet-uploaded file preview).
+ *
+ * Why this hook exists: `<img src="/api/v1/payments/42/proof">` issues an
+ * unauthenticated GET — browsers don't attach custom headers to image
+ * requests — so the proof streaming endpoint always 401s. Routing through
+ * axios fixes that, and the blob URL is then privately scoped to this tab.
+ */
+export function useProofBlobUrl(apiUrl: string | null | undefined): string | null {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!apiUrl) {
+      setBlobUrl(null);
+      return;
+    }
+    // Pre-resolved blob (e.g. file picker preview) — use as-is.
+    if (apiUrl.startsWith('blob:') || apiUrl.startsWith('data:')) {
+      setBlobUrl(apiUrl);
+      return;
+    }
+    let cancelled = false;
+    let created: string | null = null;
+    // Normalise to a path relative to the axios baseURL so the request
+    // honours interceptors (which is where Authorization gets attached).
+    const apiBase = (import.meta.env.VITE_API_URL ?? '/api/v1').replace(/\/$/, '');
+    let path = apiUrl;
+    if (apiUrl.startsWith(apiBase)) {
+      path = apiUrl.slice(apiBase.length) || '/';
+    } else if (apiUrl.startsWith('/api/v1') && apiBase.endsWith('/api/v1')) {
+      path = apiUrl.slice('/api/v1'.length) || '/';
+    }
+    api
+      .get(path, { responseType: 'blob' })
+      .then((resp) => {
+        if (cancelled) return;
+        created = URL.createObjectURL(resp.data as Blob);
+        setBlobUrl(created);
+      })
+      .catch(() => {
+        if (!cancelled) setBlobUrl(null);
+      });
+    return () => {
+      cancelled = true;
+      if (created) URL.revokeObjectURL(created);
+    };
+  }, [apiUrl]);
+  return blobUrl;
 }
 
 /**
@@ -1783,6 +1841,338 @@ export async function downloadMyInvoicePdf(
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ─── Admin: patients ledger (live, sourced from users + bookings) ────────
+
+export interface AdminPatientRow {
+  mobile: string;
+  name: string;
+  email: string | null;
+  is_registered: boolean;
+  user_id: string | null;
+  bookings_count: number;
+  total_spent: string;
+  last_booking_at: string | null;
+}
+
+export function useAdminPatients(filters?: { q?: string }) {
+  return useQuery({
+    queryKey: ['admin', 'patients', filters],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters?.q) params.set('q', filters.q);
+      const qs = params.toString();
+      const { data } = await api.get<{ data: AdminPatientRow[] }>(
+        `/admin/patients${qs ? `?${qs}` : ''}`,
+      );
+      return data.data;
+    },
+  });
+}
+
+// ─── Admin: full payments ledger ─────────────────────────────────────────
+
+export interface AdminPaymentsLedgerFilters {
+  source?: 'razorpay' | 'offline' | 'upi_manual';
+  status?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+}
+
+export interface AdminPaymentLedgerRow {
+  id: number;
+  amount: string;
+  refunded_amount: string;
+  currency: string;
+  payment_source: 'razorpay' | 'offline' | 'upi_manual';
+  payment_method: string | null;
+  payment_status: string;
+  payment_type: string;
+  captured_at: string | null;
+  created_at: string;
+  upi_reference: string | null;
+  verified_at: string | null;
+  booking_id: number;
+  booking_code: string;
+  booking_type: 'doctor_appointment' | 'test_booking';
+  booking_origin: 'online' | 'walk_in';
+  patient_snapshot: {
+    first_name?: string;
+    last_name?: string;
+    mobile?: string;
+    email?: string | null;
+  } | null;
+}
+
+export function useAdminPaymentsLedger(filters?: AdminPaymentsLedgerFilters) {
+  return useQuery({
+    queryKey: ['admin', 'payments-ledger', filters],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters?.source) params.set('source', filters.source);
+      if (filters?.status) params.set('status', filters.status);
+      if (filters?.from) params.set('from', filters.from);
+      if (filters?.to) params.set('to', filters.to);
+      if (filters?.q) params.set('q', filters.q);
+      const qs = params.toString();
+      const { data } = await api.get<{ data: AdminPaymentLedgerRow[] }>(
+        `/admin/payments-ledger${qs ? `?${qs}` : ''}`,
+      );
+      return data.data;
+    },
+  });
+}
+
+// ─── Admin: home-collection dispatch board ───────────────────────────────
+
+export type CollectionStatus =
+  | 'not_assigned'
+  | 'assigned'
+  | 'en_route'
+  | 'collected'
+  | 'received_at_lab';
+
+export interface HomeCollectionRow {
+  id: number;
+  booking_code: string;
+  booking_status: string;
+  collection_status: CollectionStatus;
+  scheduled_date: string | null;
+  scheduled_start_time: string | null;
+  total_amount: string;
+  advance_amount: string;
+  balance_amount: string;
+  patient_snapshot: {
+    first_name?: string;
+    last_name?: string;
+    mobile?: string;
+  } | null;
+  delivery_address: { line1?: string; line2?: string; city?: string; pincode?: string } | null;
+  assigned_staff_user_id: string | null;
+  assigned_staff_name: string | null;
+}
+
+export interface CollectionStaff {
+  id: string;
+  name: string;
+}
+
+export function useHomeCollections() {
+  return useQuery({
+    queryKey: ['admin', 'home-collections'],
+    queryFn: async () => {
+      const { data } = await api.get<{ data: HomeCollectionRow[] }>(
+        '/admin/home-collections',
+      );
+      return data.data;
+    },
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCollectionStaff() {
+  return useQuery({
+    queryKey: ['admin', 'collection-staff'],
+    queryFn: async () => {
+      const { data } = await api.get<{ data: CollectionStaff[] }>(
+        '/admin/collection-staff',
+      );
+      return data.data;
+    },
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useUpdateCollection(bookingId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      collection_status?: CollectionStatus;
+      assigned_staff_user_id?: string | null;
+    }) => {
+      const { data } = await api.patch<{
+        data: {
+          id: number;
+          collection_status: CollectionStatus;
+          assigned_staff_user_id: string | null;
+        };
+      }>(`/admin/bookings/${bookingId}/collection`, input);
+      return data.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'home-collections'] });
+      qc.invalidateQueries({ queryKey: qk.adminBooking(bookingId) });
+      qc.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+    },
+  });
+}
+
+// ─── Admin: reviews moderation ───────────────────────────────────────────
+
+export interface AdminReviewRow {
+  id: number;
+  rating: number;
+  comment: string;
+  status: 'pending' | 'approved' | 'rejected' | 'hidden';
+  clinic_reply: string | null;
+  replied_at: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+  doctor_user_id: string | null;
+  doctor_name: string | null;
+  patient_user_id: string | null;
+  patient_first_name: string | null;
+}
+
+export function useAdminReviews(status?: AdminReviewRow['status']) {
+  return useQuery({
+    queryKey: ['admin', 'reviews', status],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (status) params.set('status', status);
+      const qs = params.toString();
+      const { data } = await api.get<{ data: AdminReviewRow[] }>(
+        `/admin/reviews${qs ? `?${qs}` : ''}`,
+      );
+      return data.data;
+    },
+  });
+}
+
+export function useModerateReview() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      id: number;
+      status?: AdminReviewRow['status'];
+      rejection_reason?: string;
+      clinic_reply?: string;
+    }) => {
+      const { id, ...body } = input;
+      const { data } = await api.patch<{ data: { updated: boolean } }>(
+        `/admin/reviews/${id}`,
+        body,
+      );
+      return data.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'reviews'] });
+      // Public reviews list shows only `approved` — refresh that too.
+      qc.invalidateQueries({ queryKey: ['reviews'] });
+    },
+  });
+}
+
+// ─── Admin: enquiries ────────────────────────────────────────────────────
+
+export interface AdminEnquiryRow {
+  id: number;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  subject: string | null;
+  message: string;
+  status: 'new' | 'read' | 'replied' | 'closed';
+  responded_at: string | null;
+  created_at: string;
+}
+
+export function useAdminEnquiries(status?: AdminEnquiryRow['status']) {
+  return useQuery({
+    queryKey: ['admin', 'enquiries', status],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (status) params.set('status', status);
+      const qs = params.toString();
+      const { data } = await api.get<{ data: AdminEnquiryRow[] }>(
+        `/admin/enquiries${qs ? `?${qs}` : ''}`,
+      );
+      return data.data;
+    },
+  });
+}
+
+export function useUpdateEnquiry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: number; status: AdminEnquiryRow['status'] }) => {
+      const { data } = await api.patch<{ data: { updated: boolean } }>(
+        `/admin/enquiries/${input.id}`,
+        { status: input.status },
+      );
+      return data.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'enquiries'] }),
+  });
+}
+
+// ─── Admin: audit log ────────────────────────────────────────────────────
+
+export interface AdminAuditRow {
+  id: number;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  before_data: unknown;
+  after_data: unknown;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+  actor_user_id: string | null;
+  actor_role: string | null;
+  actor_name: string;
+}
+
+export function useAdminAuditLog(limit = 100) {
+  return useQuery({
+    queryKey: ['admin', 'audit-log', limit],
+    queryFn: async () => {
+      const { data } = await api.get<{ data: AdminAuditRow[] }>(
+        `/admin/audit-log?limit=${limit}`,
+      );
+      return data.data;
+    },
+  });
+}
+
+// ─── Admin: clinic settings ──────────────────────────────────────────────
+
+export interface AdminSettingRow {
+  key: string;
+  value: unknown;
+  description: string | null;
+  updated_at: string;
+}
+
+export function useAdminSettings() {
+  return useQuery({
+    queryKey: ['admin', 'settings'],
+    queryFn: async () => {
+      const { data } = await api.get<{ data: AdminSettingRow[] }>('/admin/settings');
+      return data.data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateSetting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { key: string; value: unknown; description?: string }) => {
+      const { key, ...body } = input;
+      const { data } = await api.put<{ data: { key: string; updated: boolean } }>(
+        `/admin/settings/${key}`,
+        body,
+      );
+      return data.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'settings'] });
+      qc.invalidateQueries({ queryKey: ['clinic', 'upi'] });
+    },
+  });
 }
 
 export type { UseQueryOptions };

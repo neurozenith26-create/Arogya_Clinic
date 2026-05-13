@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink, ShieldCheck } from 'lucide-react';
+import { ExternalLink, Search, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Badge } from '../../components/ui/badge';
+import { Input } from '../../components/ui/input';
 import { ProofPreview } from '../../components/payment/ProofPreview';
 import { ReVerifyPaymentModal } from '../../components/admin/ReVerifyPaymentModal';
 import {
@@ -17,6 +18,34 @@ import { formatCurrencyINR } from '../../lib/utils';
 export default function AdminPaymentVerificationsPage() {
   const { data: rows = [], isLoading } = usePendingReVerifyPayments();
   const [active, setActive] = useState<PendingReVerifyRow | null>(null);
+  const [search, setSearch] = useState('');
+
+  // Client-side filter so admin can narrow the queue by patient name,
+  // booking code (e.g. AROGYA-TEST-202605-000011), mobile, or UTR. The
+  // queue is bounded to ~hundreds of rows so JS filtering is fine — no
+  // backend round-trip on every keystroke.
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) => {
+      const name = [
+        row.patient_snapshot?.first_name,
+        row.patient_snapshot?.last_name,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      const mobile = row.patient_snapshot?.mobile?.toLowerCase() ?? '';
+      const code = row.booking_code.toLowerCase();
+      const utr = (row.upi_reference ?? '').toLowerCase();
+      return (
+        name.includes(q) ||
+        mobile.includes(q) ||
+        code.includes(q) ||
+        utr.includes(q)
+      );
+    });
+  }, [rows, search]);
 
   return (
     <div className="space-y-4">
@@ -29,7 +58,9 @@ export default function AdminPaymentVerificationsPage() {
           </p>
         </div>
         {!isLoading && rows.length > 0 && (
-          <Badge className="text-sm">{rows.length} pending</Badge>
+          <Badge className="text-sm">
+            {search ? `${filtered.length} of ${rows.length} pending` : `${rows.length} pending`}
+          </Badge>
         )}
       </div>
 
@@ -38,6 +69,15 @@ export default function AdminPaymentVerificationsPage() {
           <CardTitle className="text-base">Awaiting in-person re-verify</CardTitle>
         </CardHeader>
         <CardContent>
+          <div className="relative mb-4 max-w-md">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search patient name, booking ID, mobile or UTR…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10"
+            />
+          </div>
           {isLoading ? (
             <div className="space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (
@@ -51,9 +91,15 @@ export default function AdminPaymentVerificationsPage() {
                 Nothing to re-verify right now. Patient submissions will appear here.
               </p>
             </div>
+          ) : filtered.length === 0 ? (
+            <div className="rounded-md border border-dashed p-10 text-center">
+              <p className="text-sm text-muted-foreground">
+                No bookings match &ldquo;{search}&rdquo;. Showing 0 of {rows.length} pending.
+              </p>
+            </div>
           ) : (
             <ul className="divide-y">
-              {rows.map((row) => {
+              {filtered.map((row) => {
                 const patientName = [
                   row.patient_snapshot?.first_name,
                   row.patient_snapshot?.last_name,

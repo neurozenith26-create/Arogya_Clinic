@@ -1,11 +1,20 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
-import { Calendar, FlaskConical, FileText, Home, User, LayoutDashboard } from 'lucide-react';
+import {
+  Calendar,
+  CalendarCheck,
+  FileText,
+  FlaskConical,
+  Home,
+  LayoutDashboard,
+  User,
+} from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useCartStore } from '../stores/cartStore';
 
 const navItems = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, end: true },
+  { to: '/dashboard/bookings', label: 'My Bookings', icon: CalendarCheck },
   { to: '/dashboard/appointments', label: 'Appointments', icon: Calendar },
   { to: '/dashboard/tests', label: 'Tests', icon: FlaskConical },
   { to: '/dashboard/reports', label: 'Reports', icon: FileText },
