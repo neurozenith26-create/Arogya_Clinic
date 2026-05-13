@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Arogya Diagnostics Architecture</title>
+
+  <style>
+
+    *{
+      margin:0;
+      padding:0;
+      box-sizing:border-box;
+      font-family:Arial, Helvetica, sans-serif;
+    }
+
+    body{
+      background:#05070d;
+      color:white;
+      overflow-x:auto;
+      min-width:1900px;
+    }
+
+    .wrapper{
+      position:relative;
+      width:1900px;
+      height:1200px;
+      margin:20px auto;
+      background:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size:40px 40px;
+    }
+
+    .main-box{
+      position:absolute;
+      top:50px;
+      left:220px;
+      width:1400px;
+      height:980px;
+      border:2px solid #b6ff00;
+      border-radius:25px;
+      padding:30px;
+      box-shadow:0 0 25px rgba(182,255,0,0.25);
+    }
+
+    .main-title{
+      color:#d9ff4a;
+      font-size:32px;
+      font-weight:bold;
+      letter-spacing:4px;
+      margin-bottom:10px;
+    }
+
+    .sub-title{
+      color:#bbb;
+      font-size:14px;
+      margin-bottom:40px;
+      letter-spacing:3px;
+    }
+
+    .box{
+      position:absolute;
+      width:240px;
+      min-height:110px;
+      border:2px solid #b6ff00;
+      border-radius:18px;
+      padding:18px;
+      background:rgba(0,0,0,0.45);
+      box-shadow:0 0 15px rgba(182,255,0,0.15);
+      transition:0.3s;
+    }
+
+    .box:hover{
+      transform:translateY(-5px);
+      box-shadow:0 0 25px rgba(182,255,0,0.35);
+    }
+
+    .orange{
+      border-color:#ff7b00;
+      box-shadow:0 0 15px rgba(255,123,0,0.25);
+    }
+
+    .blue{
+      border-color:#00d9ff;
+      box-shadow:0 0 15px rgba(0,217,255,0.25);
+    }
+
+    .purple{
+      border-color:#c44dff;
+      box-shadow:0 0 15px rgba(196,77,255,0.25);
+    }
+
+    .title{
+      font-size:18px;
+      font-weight:bold;
+      color:#dfff5c;
+      margin-bottom:10px;
+      letter-spacing:1px;
+    }
+
+    .desc{
+      font-size:13px;
+      color:#ccc;
+      line-height:1.7;
+    }
+
+    .small{
+      font-size:11px;
+      color:#9c9c9c;
+      margin-top:8px;
+      line-height:1.8;
+    }
+
+    .input-box{
+      position:absolute;
+      left:25px;
+      width:170px;
+      height:100px;
+      border:2px solid #b6ff00;
+      border-radius:16px;
+      background:#0a0d14;
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      align-items:center;
+      text-align:center;
+    }
+
+    .final-output{
+      position:absolute;
+      right:25px;
+      top:320px;
+      width:260px;
+      height:360px;
+      border:2px solid #b6ff00;
+      border-radius:20px;
+      padding:25px;
+      background:#0a0d12;
+      box-shadow:0 0 20px rgba(182,255,0,0.3);
+    }
+
+    .final-output h2{
+      text-align:center;
+      letter-spacing:3px;
+      margin-bottom:30px;
+      color:white;
+    }
+
+    .final-output ul{
+      list-style:none;
+    }
+
+    .final-output li{
+      margin-bottom:18px;
+      color:#dfff5c;
+      font-size:15px;
+    }
+
+    .legend{
+      position:absolute;
+      bottom:25px;
+      left:25px;
+      width:420px;
+      border:1px dashed #666;
+      border-radius:18px;
+      padding:20px;
+      background:rgba(255,255,255,0.03);
+    }
+
+    .legend h4{
+      color:#dfff5c;
+      margin-bottom:15px;
+      letter-spacing:2px;
+    }
+
+    .legend p{
+      font-size:13px;
+      color:#bbb;
+      margin-bottom:10px;
+      line-height:1.8;
+    }
+
+    svg{
+      position:absolute;
+      top:0;
+      left:0;
+      pointer-events:none;
+    }
+
+    .flow-tag{
+      position:absolute;
+      background:#111;
+      border:1px solid #555;
+      border-radius:20px;
+      padding:5px 12px;
+      color:#ffd84d;
+      font-size:12px;
+    }
+
+  </style>
+</head>
+
+<body>
+
+<div class="wrapper">
+
+  <svg width="1900" height="1200">
+
+    <line x1="190" y1="180" x2="320" y2="180" stroke="#b6ff00" stroke-width="3" />
+    <line x1="190" y1="380" x2="320" y2="380" stroke="#b6ff00" stroke-width="3" />
+    <line x1="560" y1="180" x2="720" y2="180" stroke="#b6ff00" stroke-width="3" />
+    <line x1="560" y1="380" x2="720" y2="380" stroke="#b6ff00" stroke-width="3" />
+    <line x1="960" y1="180" x2="1120" y2="180" stroke="#b6ff00" stroke-width="3" />
+    <line x1="960" y1="380" x2="1120" y2="380" stroke="#b6ff00" stroke-width="3" />
+    <line x1="1360" y1="180" x2="1360" y2="520" stroke="#b6ff00" stroke-width="3" />
+    <line x1="1360" y1="380" x2="1360" y2="520" stroke="#b6ff00" stroke-width="3" />
+    <line x1="1500" y1="560" x2="1680" y2="560" stroke="#b6ff00" stroke-width="4" />
+
+    <line x1="920" y1="760" x2="820" y2="440" stroke="#00d9ff" stroke-width="2" stroke-dasharray="8 8" />
+    <line x1="920" y1="760" x2="820" y2="240" stroke="#00d9ff" stroke-width="2" stroke-dasharray="8 8" />
+    <line x1="920" y1="760" x2="1220" y2="240" stroke="#00d9ff" stroke-width="2" stroke-dasharray="8 8" />
+    <line x1="920" y1="760" x2="1220" y2="440" stroke="#00d9ff" stroke-width="2" stroke-dasharray="8 8" />
+
+  </svg>
+
+  <div class="input-box" style="top:130px;">
+    <h3>WEBSITE</h3>
+    <span>Public Portal</span>
+  </div>
+
+  <div class="input-box" style="top:330px;">
+    <h3>PATIENT</h3>
+    <span>User Flow</span>
+  </div>
+
+  <div class="main-box">
+
+    <div class="main-title">
+      AROGYA DIAGNOSTICS SYSTEM
+    </div>
+
+    <div class="sub-title">
+      WEBSITE → BOOKING → PAYMENTS → REPORTS → ADMIN MANAGEMENT
+    </div>
+
+    <div class="box" style="top:120px; left:70px;">
+      <div class="title">PUBLIC WEBSITE</div>
+      <div class="desc">React / Next.js Frontend</div>
+      <div class="small">
+        Home<br>
+        Doctors<br>
+        Departments<br>
+        Services<br>
+        Contact<br>
+        Feedback
+      </div>
+    </div>
+
+    <div class="box blue" style="top:320px; left:70px;">
+      <div class="title">PATIENT FLOW</div>
+      <div class="desc">User Booking Journey</div>
+      <div class="small">
+        Register/Login<br>
+        Book Appointment<br>
+        Select Tests<br>
+        Home Collection<br>
+        Payment
+      </div>
+    </div>
+
+    <div class="box" style="top:120px; left:470px;">
+      <div class="title">BOOKING ENGINE</div>
+      <div class="desc">Appointment Management</div>
+      <div class="small">
+        Doctor Slots<br>
+        Slot Locking<br>
+        Availability<br>
+        Appointment Status
+      </div>
+    </div>
+
+    <div class="box orange" style="top:320px; left:470px;">
+      <div class="title">DIAGNOSTICS ENGINE</div>
+      <div class="desc">Test & Cart System</div>
+      <div class="small">
+        Pathology<br>
+        Radiology<br>
+        Health Packages<br>
+        Cart + Orders
+      </div>
+    </div>
+
+    <div class="box" style="top:120px; left:870px;">
+      <div class="title">PAYMENT GATEWAY</div>
+      <div class="desc">Razorpay Integration</div>
+      <div class="small">
+        UPI<br>
+        Cards<br>
+        Webhooks<br>
+        Invoice Generation<br>
+        Refunds
+      </div>
+    </div>
+
+    <div class="box blue" style="top:320px; left:870px;">
+      <div class="title">REPORT SYSTEM</div>
+      <div class="desc">Medical Reports & File Management</div>
+      <div class="small">
+        Admin Upload Portal<br>
+        PDF / JPEG / JPG Upload<br>
+        Multiple File Uploads<br>
+        Patient Reports Access<br>
+        Email Notifications<br>
+        Download Center
+      </div>
+    </div>
+
+    <div class="box purple" style="top:500px; left:1110px; width:320px;">
+      <div class="title">ADMIN PANEL</div>
+      <div class="desc">Complete Clinic Operations Dashboard</div>
+      <div class="small">
+        Doctor Management<br>
+        Departments<br>
+        Test Management<br>
+        Slot Control<br>
+        Reports<br>
+        Payments<br>
+        Revenue Analytics<br>
+        Booking Monitoring
+      </div>
+    </div>
+
+    <div class="box orange" style="top:700px; left:620px; width:600px;">
+      <div class="title">DATABASE + BACKEND CORE</div>
+      <div class="desc">Node.js / Express / PostgreSQL / Redis / Cloud Storage</div>
+      <div class="small">
+        USERS TABLE → Patients / Admin / Doctors<br>
+        BOOKINGS TABLE → Appointment Status / Slot Tracking<br>
+        PAYMENTS TABLE → Razorpay Transactions<br>
+        REPORTS TABLE → PDFs / Images / Multiple Files<br>
+        FILE STORAGE → Secure Patient Reports<br>
+        SERVICES TABLE → Tests / Packages / Pricing<br>
+        REDIS → Slot Locking + Queue Jobs + Notifications
+      </div>
+    </div>
+
+  </div>
+
+  <div class="final-output">
+    <h2>
+      FINAL CLINIC<br>
+      ECOSYSTEM
+    </h2>
+
+    <ul>
+      <li>✔ Doctor Appointments</li>
+      <li>✔ Diagnostic Booking</li>
+      <li>✔ Home Collection</li>
+      <li>✔ Online Payments</li>
+      <li>✔ Multi-format Patient Reports</li>
+      <li>✔ Admin Dashboard</li>
+      <li>✔ Revenue Tracking</li>
+    </ul>
+  </div>
+
+  <div class="flow-tag" style="top:250px; left:900px;">
+    Payment Confirmation Flow
+  </div>
+
+  <div class="flow-tag" style="top:650px; left:980px;">
+    Central Backend Architecture
+  </div>
+
+  <div class="legend">
+
+    <h4>ARCHITECTURE CONNECTIVITY</h4>
+
+    <p><strong>Frontend:</strong> React / Next.js based public website and patient portal.</p>
+
+    <p><strong>Booking Engine:</strong> Handles doctor slot scheduling and appointment locking.</p>
+
+    <p><strong>Diagnostics Engine:</strong> Manages tests, health packages, and cart-based bookings.</p>
+
+    <p><strong>Backend:</strong> Node.js + PostgreSQL manages all clinic operations, secure report storage, and patient access management.</p>
+
+    <p><strong>Redis:</strong> Used for slot locking, queues, OTP, and notifications.</p>
+
+    <p><strong>Razorpay:</strong> Payment gateway for advance booking payments.</p>
+
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,28 @@
+{
+  "name": "arogya-diagnostics-website",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Arogya Diagnostics — Clinic Website + Booking + Admin Platform (React + Node.js + Supabase)",
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:frontend": "pnpm --filter @arogya/frontend run dev",
+    "dev:backend": "pnpm --filter @arogya/backend run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,sql}\"",
+    "db:migrate": "pnpm --filter @arogya/backend run db:migrate",
+    "db:seed": "pnpm --filter @arogya/backend run db:seed"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.3",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.2"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@10.20.0"
+}

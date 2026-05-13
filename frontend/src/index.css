@@ -1,0 +1,151 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Brand palette — blue + mint gradient (lab + doctor consultation feel)
+ *
+ *   Primary blue:     #0066D9  ─ trust, medical, clinical
+ *   Accent teal/mint: #2FD8A8  ─ wellness, vitality, calls-to-action
+ *   Deep navy:        #0A2540  ─ headers / footer / strong contrast
+ */
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 215 50% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 215 50% 12%;
+
+    /* Primary: medical blue */
+    --primary: 213 95% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary: mint teal (CTAs, accents, highlights) */
+    --secondary: 162 68% 52%;
+    --secondary-foreground: 215 50% 12%;
+
+    --muted: 213 30% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 162 68% 94%;
+    --accent-foreground: 213 95% 30%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 213 25% 90%;
+    --input: 213 25% 90%;
+    --ring: 213 95% 45%;
+    --radius: 0.75rem;
+
+    /* Brand gradient tokens (for hero, CTAs, cards) */
+    --gradient-primary: linear-gradient(135deg, #0066D9 0%, #2FD8A8 100%);
+    --gradient-primary-soft: linear-gradient(135deg, rgba(0, 102, 217, 0.08) 0%, rgba(47, 216, 168, 0.08) 100%);
+    --gradient-hero: linear-gradient(135deg, #0A2540 0%, #0066D9 60%, #2FD8A8 100%);
+  }
+
+  .dark {
+    --background: 215 50% 6%;
+    --foreground: 0 0% 95%;
+    --card: 215 45% 10%;
+    --card-foreground: 0 0% 95%;
+    --primary: 213 95% 60%;
+    --primary-foreground: 215 50% 8%;
+    --secondary: 162 68% 55%;
+    --secondary-foreground: 215 50% 8%;
+    --muted: 215 30% 18%;
+    --muted-foreground: 215 16% 65%;
+    --accent: 215 50% 18%;
+    --accent-foreground: 0 0% 95%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 215 30% 22%;
+    --input: 215 30% 22%;
+    --ring: 213 95% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Smooth anchor scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer components {
+  .bg-gradient-brand {
+    background-image: var(--gradient-primary);
+  }
+  .bg-gradient-brand-soft {
+    background-image: var(--gradient-primary-soft);
+  }
+  .bg-gradient-hero {
+    background-image: var(--gradient-hero);
+  }
+  .text-gradient-brand {
+    background-image: var(--gradient-primary);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* ── Light, fast animations ────────────────────────────────────────────── */
+@layer utilities {
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fade-down {
+    from { opacity: 0; transform: translateY(-12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes scale-in {
+    from { opacity: 0; transform: scale(0.96); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  @keyframes float-slow {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-8px); }
+  }
+  @keyframes shimmer {
+    from { background-position: -200% 0; }
+    to   { background-position: 200% 0; }
+  }
+
+  .animate-fade-in   { animation: fade-in   0.4s ease-out both; }
+  .animate-fade-up   { animation: fade-up   0.5s ease-out both; }
+  .animate-fade-down { animation: fade-down 0.5s ease-out both; }
+  .animate-scale-in  { animation: scale-in  0.35s ease-out both; }
+  .animate-float-slow { animation: float-slow 4s ease-in-out infinite; }
+
+  .delay-100 { animation-delay: 100ms; }
+  .delay-200 { animation-delay: 200ms; }
+  .delay-300 { animation-delay: 300ms; }
+  .delay-400 { animation-delay: 400ms; }
+  .delay-500 { animation-delay: 500ms; }
+
+  /* Respect reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    .animate-fade-in,
+    .animate-fade-up,
+    .animate-fade-down,
+    .animate-scale-in,
+    .animate-float-slow {
+      animation: none;
+    }
+  }
+}
