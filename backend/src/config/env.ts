@@ -27,6 +27,11 @@ const envSchema = z.object({
   STORAGE_LOCAL_PATH: z.string().default('./uploads'),
   STORAGE_PUBLIC_BASE_URL: z.string().default('http://localhost:3001/uploads'),
 
+  // Public origin of this backend (used to build absolute URLs for assets
+  // served straight out of Postgres — report files, etc). On Render this is
+  // the service URL like https://arogya-clinic.onrender.com.
+  BACKEND_PUBLIC_URL: z.string().default('http://localhost:3001'),
+
   // External services (all optional in dev)
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),

@@ -39,8 +39,11 @@ coverage/
 # Vite cache
 .vite/
 
-# Generated PDFs / uploads (local dev only)
-uploads/
+# Generated PDFs / uploads (local dev only) — anchored to repo root so it
+# matches only the runtime storage folder, not source code at
+# backend/src/modules/uploads/.
+/backend/uploads/
+/uploads/
 generated-pdfs/
 
 # Supabase local
