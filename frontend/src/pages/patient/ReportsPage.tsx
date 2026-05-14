@@ -3,14 +3,22 @@ import { Calendar, Download, FileText } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Skeleton } from '../../components/ui/skeleton';
-import { downloadReport, useMyReports } from '../../hooks/queries';
+import {
+  downloadReport,
+  useClearTabBadges,
+  useMyReports,
+} from '../../hooks/queries';
 import { getApiErrorMessage } from '../../lib/apiClient';
 import { format } from 'date-fns';
+
+const REPORT_BADGE_EVENTS = ['report_uploaded'] as const;
 
 export default function ReportsPage() {
   const { data: reports = [], isLoading } = useMyReports();
   const [downloading, setDownloading] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Clear sidebar "NEW" badge whenever it goes above zero on this page.
+  useClearTabBadges(REPORT_BADGE_EVENTS);
 
   const handleDownload = async (reportId: number) => {
     setDownloading(reportId);

@@ -1,0 +1,1840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Arogya Diagnostics — System Architecture &amp; Workflow Guide</title>
+<style>
+  :root {
+    --bg: #0a0e14;
+    --bg-2: #0f141b;
+    --panel: rgba(15, 20, 27, 0.7);
+    --ink: #d8e3ee;
+    --muted: #8a99ad;
+    --dim: #5c6a7e;
+    --lime: #c8f55a;
+    --cyan: #6ee7ff;
+    --violet: #b894ff;
+    --amber: #ffc36b;
+    --pink:  #ff7da3;
+    --red:   #ff5c7a;
+    --green: #6ee7a8;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 10% -10%, #0d2030 0%, transparent 60%),
+      radial-gradient(1000px 500px at 110% 10%, #1a0d22 0%, transparent 55%),
+      linear-gradient(180deg, var(--bg), var(--bg-2));
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    background-attachment: fixed;
+    scroll-behavior: smooth;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, kbd { font-family: inherit; color: var(--green); }
+  code.k { color: var(--amber); }
+  code.v { color: var(--violet); }
+  code.r { color: var(--red); }
+  pre {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 12px;
+    color: var(--ink);
+    margin: 8px 0 14px;
+  }
+  pre .c1 { color: var(--lime); }
+  pre .c2 { color: var(--cyan); }
+  pre .c3 { color: var(--amber); }
+  pre .c4 { color: var(--dim); }
+  ul { padding-left: 18px; }
+  ul li { margin: 3px 0; color: var(--ink); }
+  ul li strong { color: var(--lime); }
+
+  /* layout */
+  .layout { position: relative; z-index: 1; max-width: 1700px; margin: 0 auto; padding: 0; }
+  header.hero {
+    text-align: center;
+    padding: 56px 24px 24px;
+  }
+  header.hero h1 {
+    font-size: 38px;
+    letter-spacing: 0.08em;
+    color: var(--lime);
+    margin: 0 0 10px;
+    text-shadow: 0 0 14px rgba(200,245,90,0.25);
+    font-weight: 700;
+  }
+  header.hero .subtitle {
+    color: var(--muted);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    font-size: 11px;
+  }
+  header.hero .breadcrumb {
+    margin-top: 10px;
+    color: var(--dim);
+    font-size: 11px;
+  }
+  header.hero .breadcrumb span { color: var(--cyan); }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: rgba(10,14,20,0.92);
+    backdrop-filter: blur(8px);
+    border-top: 1px solid rgba(110,231,255,0.2);
+    border-bottom: 1px solid rgba(110,231,255,0.2);
+    padding: 10px 24px;
+    margin: 24px 0 36px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  nav.toc a {
+    color: var(--cyan);
+    margin-right: 18px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  nav.toc a:hover { color: var(--lime); }
+
+  main { padding: 0 32px 80px; }
+
+  /* section banner */
+  section.zone { margin: 0 0 56px; }
+  section.zone > .banner {
+    border-left: 4px solid var(--lime);
+    padding: 4px 14px;
+    margin: 0 0 18px;
+  }
+  section.zone > .banner h2 {
+    margin: 0;
+    color: var(--lime);
+    font-size: 22px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  section.zone > .banner p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  section.zone.cyan > .banner { border-color: var(--cyan); }
+  section.zone.cyan > .banner h2 { color: var(--cyan); }
+  section.zone.pink > .banner { border-color: var(--pink); }
+  section.zone.pink > .banner h2 { color: var(--pink); }
+  section.zone.amber > .banner { border-color: var(--amber); }
+  section.zone.amber > .banner h2 { color: var(--amber); }
+  section.zone.violet > .banner { border-color: var(--violet); }
+  section.zone.violet > .banner h2 { color: var(--violet); }
+  section.zone.red > .banner { border-color: var(--red); }
+  section.zone.red > .banner h2 { color: var(--red); }
+
+  /* panel */
+  .panel {
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 18px 20px;
+    background: var(--panel);
+    margin: 0 0 16px;
+  }
+  .panel h3 {
+    margin: 0 0 10px;
+    color: var(--lime);
+    font-size: 13px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .panel h3.cyan { color: var(--cyan); }
+  .panel h3.amber { color: var(--amber); }
+  .panel h3.pink { color: var(--pink); }
+  .panel h3.violet { color: var(--violet); }
+  .panel p { margin: 4px 0; }
+
+  /* grid 2 col / 3 col */
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+
+  /* chips / pills */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 10px;
+    color: var(--ink);
+    background: rgba(255,255,255,0.03);
+    white-space: nowrap;
+  }
+  .chip.s { color: var(--lime); border-color: rgba(200,245,90,0.45); }
+  .chip.h { color: var(--cyan); border-color: rgba(110,231,255,0.45); }
+  .chip.a { color: var(--amber); border-color: rgba(255,195,107,0.45); }
+  .chip.d { color: var(--violet); border-color: rgba(184,148,255,0.45); }
+  .chip.r { color: var(--red); border-color: rgba(255,92,122,0.45); }
+  .chip.p { color: var(--pink); border-color: rgba(255,125,163,0.45); }
+  .chip.g { color: var(--green); border-color: rgba(110,231,168,0.45); }
+
+  /* tables */
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 14px; font-size: 12px; }
+  th, td {
+    border: 1px solid rgba(255,255,255,0.08);
+    padding: 8px 10px;
+    vertical-align: top;
+    text-align: left;
+  }
+  th { background: rgba(110,231,255,0.08); color: var(--cyan); font-weight: 600; letter-spacing: 0.06em; }
+  tbody tr:nth-child(odd) { background: rgba(255,255,255,0.015); }
+  td code { color: var(--green); }
+
+  /* arch diagram */
+  .arch-layers { display: grid; gap: 14px; }
+  .arch-layer {
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    padding: 14px 16px;
+    background: rgba(255,255,255,0.025);
+    position: relative;
+  }
+  .arch-layer .lbl {
+    position: absolute;
+    top: -10px; left: 14px;
+    background: var(--bg-2);
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .arch-layer.user { color: var(--ink); border-color: rgba(216,227,238,0.5); }
+  .arch-layer.front { color: var(--lime); border-color: rgba(200,245,90,0.45); }
+  .arch-layer.api { color: var(--amber); border-color: rgba(255,195,107,0.45); }
+  .arch-layer.svc { color: var(--cyan); border-color: rgba(110,231,255,0.45); }
+  .arch-layer.db  { color: var(--violet); border-color: rgba(184,148,255,0.45); }
+  .arch-layer.ext { color: var(--pink); border-color: rgba(255,125,163,0.45); }
+  .arch-flex { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .arch-pill {
+    border: 1px solid currentColor;
+    color: inherit;
+    background: rgba(255,255,255,0.02);
+    border-radius: 6px;
+    padding: 5px 9px;
+    font-size: 11px;
+  }
+  .arch-connector {
+    text-align: center;
+    color: var(--muted);
+    font-size: 18px;
+  }
+
+  /* module pipeline */
+  .module {
+    position: relative;
+    border: 1px solid rgba(200,245,90,0.35);
+    border-radius: 12px;
+    margin: 0 0 28px;
+    padding: 24px 22px 26px;
+    background: linear-gradient(180deg, rgba(200,245,90,0.04), rgba(200,245,90,0.01)), var(--panel);
+    box-shadow: 0 0 0 1px rgba(200,245,90,0.05) inset, 0 10px 30px rgba(0,0,0,0.35);
+  }
+  .module::before {
+    content: attr(data-num);
+    position: absolute;
+    top: -14px; left: 18px;
+    color: var(--lime);
+    background: var(--bg-2);
+    padding: 2px 10px;
+    border: 1px solid rgba(200,245,90,0.5);
+    border-radius: 999px;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+  }
+  .module .mod-title {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin: 0 0 4px;
+    flex-wrap: wrap;
+  }
+  .module h3.mod {
+    margin: 0;
+    color: var(--lime);
+    font-size: 17px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .module .arrow-key {
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+  .module .mod-desc {
+    color: var(--muted);
+    margin: 4px 0 18px;
+    font-size: 12px;
+    max-width: 1200px;
+  }
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 14px;
+    overflow-x: auto;
+    padding: 8px 4px 14px;
+    scrollbar-color: rgba(255,255,255,0.2) transparent;
+  }
+  .flow + .flow { margin-top: 10px; }
+  .flow::-webkit-scrollbar { height: 8px; }
+  .flow::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+  .node {
+    flex: 0 0 220px;
+    min-height: 110px;
+    border: 1px solid var(--node-color, var(--lime));
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.025);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.02) inset, 0 0 18px -10px var(--node-color, var(--lime));
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: relative;
+  }
+  .node .kind { font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--node-color); opacity: 0.85; }
+  .node .name { font-size: 12px; color: var(--ink); font-weight: 600; word-break: break-word; }
+  .node .fn { font-size: 11px; color: var(--cyan); word-break: break-word; }
+  .node .sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .node.user { --node-color: var(--ink); }
+  .node.page { --node-color: var(--lime); }
+  .node.hook { --node-color: var(--cyan); }
+  .node.api  { --node-color: var(--amber); }
+  .node.db   { --node-color: var(--violet); }
+  .node.event{ --node-color: var(--pink); border-style: dashed; }
+  .node.admin{ --node-color: var(--red); }
+  .node.gate { border-style: dashed; background: rgba(255,195,107,0.05); }
+  .arrow { align-self: center; color: var(--muted); font-size: 20px; user-select: none; flex: 0 0 18px; text-align: center; }
+  .arrow.dashed { color: var(--pink); }
+
+  /* DB Schema visual */
+  .schema-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+  }
+  .tbl {
+    border: 1px solid var(--tbl-color, var(--violet));
+    border-radius: 10px;
+    padding: 12px 14px;
+    background: rgba(184,148,255,0.04);
+  }
+  .tbl .hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px dashed rgba(255,255,255,0.12);
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+  }
+  .tbl .hdr .nm { color: var(--violet); font-weight: 700; font-size: 13px; letter-spacing: 0.04em; }
+  .tbl .hdr .pk { color: var(--muted); font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; }
+  .tbl ul { list-style: none; padding: 0; margin: 0; }
+  .tbl li { font-size: 11px; color: var(--ink); padding: 3px 0; display: flex; gap: 6px; }
+  .tbl li .col { color: var(--ink); min-width: 0; word-break: break-word; }
+  .tbl li .typ { color: var(--dim); font-size: 10px; }
+  .tbl li .fk  { color: var(--amber); }
+  .tbl li .pkm { color: var(--lime); }
+  .tbl li .uq  { color: var(--cyan); }
+  .tbl li .nn  { color: var(--pink); }
+  .tbl.cyan { --tbl-color: var(--cyan); background: rgba(110,231,255,0.04); }
+  .tbl.cyan .hdr .nm { color: var(--cyan); }
+  .tbl.lime { --tbl-color: var(--lime); background: rgba(200,245,90,0.04); }
+  .tbl.lime .hdr .nm { color: var(--lime); }
+  .tbl.amber { --tbl-color: var(--amber); background: rgba(255,195,107,0.04); }
+  .tbl.amber .hdr .nm { color: var(--amber); }
+  .tbl.pink { --tbl-color: var(--pink); background: rgba(255,125,163,0.04); }
+  .tbl.pink .hdr .nm { color: var(--pink); }
+  .tbl.red { --tbl-color: var(--red); background: rgba(255,92,122,0.04); }
+  .tbl.red .hdr .nm { color: var(--red); }
+
+  /* steps */
+  .steps {
+    counter-reset: step;
+  }
+  .step {
+    counter-increment: step;
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 10px;
+    align-items: start;
+    margin: 8px 0;
+  }
+  .step::before {
+    content: counter(step);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px; height: 28px;
+    background: rgba(110,231,255,0.1);
+    color: var(--cyan);
+    border-radius: 50%;
+    border: 1px solid rgba(110,231,255,0.45);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .step .body { padding-top: 4px; }
+  .step .body .t { color: var(--ink); font-weight: 600; }
+  .step .body .d { color: var(--muted); font-size: 12px; margin-top: 3px; }
+
+  /* state table for payment */
+  table.state td.ok { color: var(--green); }
+  table.state td.wait { color: var(--amber); }
+  table.state td.bad { color: var(--red); }
+
+  /* footer */
+  footer {
+    text-align: center;
+    color: var(--dim);
+    margin: 60px 0 16px;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  footer span { color: var(--cyan); }
+
+  /* role badges */
+  .role-badge {
+    display: inline-block;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    margin-right: 4px;
+    border: 1px solid currentColor;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .role-badge.v { color: var(--ink); }
+  .role-badge.p { color: var(--green); }
+  .role-badge.a { color: var(--red); }
+  .role-badge.s { color: var(--violet); }
+  .role-badge.c { color: var(--cyan); }
+  .role-badge.d { color: var(--amber); }
+
+  @media (max-width: 900px) {
+    header.hero h1 { font-size: 26px; }
+    .module h3.mod { font-size: 14px; }
+    .node { flex-basis: 200px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ======================== HERO ======================== -->
+<header class="hero">
+  <h1>AROGYA · SYSTEM ARCHITECTURE &amp; WORKFLOW GUIDE</h1>
+  <div class="subtitle">single-page reference · run · understand · operate</div>
+  <div class="breadcrumb">
+    React + Vite + TS &nbsp;·&nbsp; Express + TS &nbsp;·&nbsp; Postgres (raw <span>pg</span>) &nbsp;·&nbsp; pnpm + Turborepo monorepo
+  </div>
+</header>
+
+<!-- ======================== TOC ======================== -->
+<nav class="toc">
+  <a href="#about">01 About</a>
+  <a href="#quickstart">02 Run it</a>
+  <a href="#tech">03 Tech stack</a>
+  <a href="#arch">04 Architecture</a>
+  <a href="#roles">05 Roles</a>
+  <a href="#features">06 Feature matrix</a>
+  <a href="#payments">07 Payments</a>
+  <a href="#journeys">08 User journeys</a>
+  <a href="#modules">09 Module pipelines</a>
+  <a href="#db">10 Database graph</a>
+  <a href="#cross">11 Cross-cutting</a>
+  <a href="#env">12 Env vars</a>
+  <a href="#tree">13 Repo tree</a>
+  <a href="#roadmap">14 Roadmap</a>
+</nav>
+
+<main>
+
+<!-- ======================== 01 ABOUT ======================== -->
+<section id="about" class="zone cyan">
+  <div class="banner">
+    <h2>01 · About the product</h2>
+    <p>What this app is, who uses it, what problems it solves.</p>
+  </div>
+
+  <div class="panel">
+    <h3 class="cyan">Product summary</h3>
+    <p><strong>Arogya Diagnostics &amp; Multispeciality Clinic</strong> (Kolkata) operates a public marketing site, a patient portal, an admin operations panel, and a walk-in billing surface — all from one codebase.</p>
+    <p>A single patient identity walks through: <em>discover services → book → pay (manual UPI for now) → get sample taken (in-clinic or at home) → wait → download reports → download invoice</em>. Admins run the entire back office: catalog, doctors + schedules, slot generation, walk-in bills, payment re-verification, home-collection dispatch, report uploads, analytics, audit log.</p>
+  </div>
+
+  <div class="grid-3">
+    <div class="panel">
+      <h3>Three audiences, one repo</h3>
+      <ul>
+        <li><strong>Visitors</strong> — phase-1 marketing site, contact form, public reviews.</li>
+        <li><strong>Patients</strong> — sign up, book, pay, view reports, download invoices.</li>
+        <li><strong>Admin / super_admin</strong> — operations, catalog, walk-in, reports, analytics.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3 class="amber">What makes it tick</h3>
+      <ul>
+        <li><strong>booking_code</strong> ties patient → booking → items → payments → invoice → reports.</li>
+        <li><strong>One transaction</strong> creates booking + items + invoice + payment row.</li>
+        <li><strong>Live slots</strong> generated from doctor schedule, never stored.</li>
+        <li><strong>Backend-owned authz</strong> — RLS dropped, JWT re-validated per request.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3 class="pink">What is still in flight</h3>
+      <ul>
+        <li>SMS OTP via MSG91 — currently logs <code>debug_code</code> in non-prod.</li>
+        <li>Razorpay signature verification + real checkout — currently a stub.</li>
+        <li>Slot-lock expiry cron for stale drafts.</li>
+        <li>S3 storage driver — falls back to local writes.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ======================== 02 QUICKSTART ======================== -->
+<section id="quickstart" class="zone">
+  <div class="banner">
+    <h2>02 · Run it locally (zero to running app)</h2>
+    <p>From an empty checkout to a working dev environment in ~5 minutes.</p>
+  </div>
+
+  <div class="panel">
+    <h3>Prerequisites</h3>
+    <div class="chips">
+      <span class="chip s">Node 20+</span>
+      <span class="chip s">pnpm 9+</span>
+      <span class="chip d">Postgres 14+ (or Supabase)</span>
+      <span class="chip a">macOS / Linux / Windows (PowerShell)</span>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="panel">
+      <h3>1) Install</h3>
+<pre><span class="c4"># at repo root</span>
+<span class="c2">pnpm install</span></pre>
+    </div>
+
+    <div class="panel">
+      <h3>2) Backend env (<code>backend/.env</code>)</h3>
+<pre><span class="c1">DATABASE_URL</span>=postgres://user:pass@localhost:5432/arogya
+<span class="c1">JWT_SECRET</span>=replace-with-16-or-more-chars-secret
+<span class="c1">PORT</span>=3001
+<span class="c1">NODE_ENV</span>=development
+<span class="c1">TZ</span>=Asia/Kolkata
+<span class="c1">CORS_ORIGIN</span>=http://localhost:5173
+<span class="c1">DATABASE_SSL</span>=false
+<span class="c1">JWT_EXPIRES_IN</span>=7d
+<span class="c1">BCRYPT_ROUNDS</span>=10
+<span class="c1">OTP_EXPIRY_MINUTES</span>=10
+<span class="c1">OTP_MAX_ATTEMPTS</span>=5
+<span class="c1">STORAGE_DRIVER</span>=local
+<span class="c1">STORAGE_LOCAL_PATH</span>=./uploads
+<span class="c1">STORAGE_PUBLIC_BASE_URL</span>=http://localhost:3001/uploads
+<span class="c4"># optional: MSG91_*, RAZORPAY_*, RESEND_API_KEY, SENTRY_DSN</span></pre>
+    </div>
+
+    <div class="panel">
+      <h3>3) Frontend env (<code>frontend/.env</code>)</h3>
+<pre><span class="c1">VITE_API_URL</span>=http://localhost:3001/api/v1
+<span class="c1">VITE_PHASE_2_ENABLED</span>=true
+<span class="c1">VITE_USE_MOCK_DATA</span>=false</pre>
+    </div>
+
+    <div class="panel">
+      <h3>4) Migrate + seed</h3>
+<pre><span class="c2">pnpm db:migrate</span>   <span class="c4"># applies supabase/migrations/0001..0026</span>
+<span class="c2">pnpm db:seed</span>      <span class="c4"># categories, departments, services, demo accounts</span></pre>
+    </div>
+
+    <div class="panel">
+      <h3>5) Run dev (both apps in parallel)</h3>
+<pre><span class="c2">pnpm dev</span>          <span class="c4"># turbo dev — frontend 5173, backend 3001</span>
+<span class="c4"># or individually:</span>
+<span class="c2">pnpm dev:frontend</span>
+<span class="c2">pnpm dev:backend</span></pre>
+    </div>
+
+    <div class="panel">
+      <h3>6) Open the apps</h3>
+      <ul>
+        <li><strong>Patient site</strong> — <a href="http://localhost:5173">http://localhost:5173</a></li>
+        <li><strong>Patient login</strong> — <a href="http://localhost:5173/auth/login">/auth/login</a></li>
+        <li><strong>Admin login</strong> — <a href="http://localhost:5173/admin/login">/admin/login</a></li>
+        <li><strong>Health check</strong> — <a href="http://localhost:3001/api/v1/health">/api/v1/health</a></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 class="amber">Demo credentials (seeded by 05_super_admin.sql)</h3>
+    <table>
+      <thead><tr><th>Role</th><th>Email</th><th>Password</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><span class="role-badge s">SUPER ADMIN</span></td><td><code>admin@gmail.com</code></td><td><code>123</code></td><td>rotate before any deployment</td></tr>
+        <tr><td><span class="role-badge p">PATIENT</span></td><td><code>patient@gmail.com</code></td><td><code>123</code></td><td>has booking + report sample data after seed</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ======================== 03 TECH STACK ======================== -->
+<section id="tech" class="zone amber">
+  <div class="banner">
+    <h2>03 · Technology stack</h2>
+    <p>Every dependency you'll meet, grouped by layer.</p>
+  </div>
+
+  <div class="panel">
+    <h3>Frontend (<code>frontend/</code>)</h3>
+    <div class="chips">
+      <span class="chip s">React 18</span>
+      <span class="chip s">Vite 5</span>
+      <span class="chip s">TypeScript</span>
+      <span class="chip s">Tailwind 3</span>
+      <span class="chip s">Radix UI primitives</span>
+      <span class="chip h">TanStack Query v5</span>
+      <span class="chip h">Zustand v5 (persisted)</span>
+      <span class="chip h">React Router v6</span>
+      <span class="chip h">React Hook Form + Zod</span>
+      <span class="chip h">axios</span>
+      <span class="chip s">lucide-react icons</span>
+      <span class="chip s">recharts (analytics, lazy)</span>
+      <span class="chip s">date-fns</span>
+      <span class="chip s">react-qr-code</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 class="amber">Backend (<code>backend/</code>)</h3>
+    <div class="chips">
+      <span class="chip a">Node 20 (ESM)</span>
+      <span class="chip a">Express 4</span>
+      <span class="chip a">TypeScript via tsx watch</span>
+      <span class="chip a">raw pg (no ORM)</span>
+      <span class="chip a">zod</span>
+      <span class="chip a">jsonwebtoken</span>
+      <span class="chip a">bcryptjs</span>
+      <span class="chip a">multer</span>
+      <span class="chip a">pdfkit</span>
+      <span class="chip a">helmet</span>
+      <span class="chip a">cors</span>
+      <span class="chip a">express-rate-limit</span>
+      <span class="chip a">pino + pino-http</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 class="violet">Database (<code>supabase/migrations/</code>)</h3>
+    <div class="chips">
+      <span class="chip d">Postgres 14+</span>
+      <span class="chip d">pgcrypto · uuid-ossp · pg_trgm · citext</span>
+      <span class="chip d">26 versioned migrations</span>
+      <span class="chip d">JSONB for schedule + address + snapshot</span>
+      <span class="chip d">BYTEA blobs for doctor + collector + payment-proof images</span>
+      <span class="chip d">Sequences + triggers (booking_code · invoice_number)</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 class="cyan">Shared (<code>shared/</code>) — workspace package</h3>
+    <p>Re-exported on both sides as <code>@arogya/shared</code>:</p>
+    <ul>
+      <li><strong>enums.ts</strong> — USER_ROLES · BOOKING_TYPE · VISIT_TYPE · BOOKING_STATUS · PAYMENT_STATUS_BOOKING · PAYMENT_SOURCE · PAYMENT_METHOD · BOOKING_ITEM_TYPE · COLLECTION_STATUS · REPORT_TYPE · REVIEW_STATUS · ENQUIRY_STATUS</li>
+      <li><strong>types.ts</strong> — User · Address · Department · Service · Booking · BookingItem · WeeklySchedule · DailyScheduleSlot · Report · PaymentRecord · Invoice</li>
+      <li><strong>schemas/</strong> — address (pincode/mobile/address) · booking · enquiry · review</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h3 class="pink">External integrations (env-gated)</h3>
+    <div class="chips">
+      <span class="chip p">MSG91 (SMS / OTP) — TODO</span>
+      <span class="chip p">Razorpay (orders + webhook) — STUB</span>
+      <span class="chip p">Resend (email)</span>
+      <span class="chip p">Sentry (DSN env-driven)</span>
+    </div>
+  </div>
+</section>
+
+<!-- ======================== 04 ARCHITECTURE ======================== -->
+<section id="arch" class="zone violet">
+  <div class="banner">
+    <h2>04 · Technical architecture (request lifecycle)</h2>
+    <p>Top-down: browser → frontend bundle → API → service layer → Postgres → file storage.</p>
+  </div>
+
+  <div class="arch-layers">
+
+    <div class="arch-layer user">
+      <span class="lbl">L0 — User</span>
+      <div class="arch-flex">
+        <span class="arch-pill">Visitor (anonymous)</span>
+        <span class="arch-pill">Patient (JWT, role=patient)</span>
+        <span class="arch-pill">Admin / super_admin (JWT)</span>
+        <span class="arch-pill">Collector (read-only on booking)</span>
+      </div>
+    </div>
+    <div class="arch-connector">↓</div>
+
+    <div class="arch-layer front">
+      <span class="lbl">L1 — Browser (Vite bundle)</span>
+      <div class="arch-flex">
+        <span class="arch-pill">main.tsx → BrowserRouter → QueryClientProvider → HelmetProvider</span>
+        <span class="arch-pill">App.tsx route map (lazy chunks)</span>
+        <span class="arch-pill">3 layouts: PublicLayout · DashboardLayout · AdminLayout</span>
+        <span class="arch-pill">stores: useAuthStore · useCartStore (localStorage)</span>
+        <span class="arch-pill">hooks/queries.ts — 60+ TanStack hooks (single file)</span>
+        <span class="arch-pill">lib/apiClient.ts — axios + auth header + 401 interceptor</span>
+        <span class="arch-pill">VITE_USE_MOCK_DATA gate → in-memory mocks</span>
+      </div>
+    </div>
+    <div class="arch-connector">↓ &nbsp;Authorization: Bearer &lt;jwt&gt;</div>
+
+    <div class="arch-layer api">
+      <span class="lbl">L2 — Express API (3001)</span>
+      <div class="arch-flex">
+        <span class="arch-pill">helmet + cors + json + urlencoded + pinoHttp + generalLimiter(200/min)</span>
+        <span class="arch-pill">static /uploads when STORAGE_DRIVER=local</span>
+        <span class="arch-pill">auditLogMiddleware (res.on finish)</span>
+        <span class="arch-pill">requireAuth · requireRole</span>
+        <span class="arch-pill">notFoundHandler · errorHandler (Zod/Multer/pg codes)</span>
+      </div>
+      <div class="arch-flex" style="margin-top:8px">
+        <span class="arch-pill">/auth (signup · login · OTP · me · change-password)</span>
+        <span class="arch-pill">/public (services · doctors · departments · enquiries · reviews · pincodes · clinic/upi)</span>
+        <span class="arch-pill">/phase2 (bookings · slots · payments · admin/*)</span>
+        <span class="arch-pill">/uploads (reports · doctor photos · collector photos)</span>
+        <span class="arch-pill">/invoices (admin list · PDF stream)</span>
+      </div>
+    </div>
+    <div class="arch-connector">↓</div>
+
+    <div class="arch-layer svc">
+      <span class="lbl">L3 — Service / lib layer</span>
+      <div class="arch-flex">
+        <span class="arch-pill">lib/jwt.ts — signJwt · verifyJwt</span>
+        <span class="arch-pill">lib/passwords.ts — bcrypt hash + verify</span>
+        <span class="arch-pill">lib/otpStore.ts — in-memory Map (Redis later)</span>
+        <span class="arch-pill">lib/storage.ts — LocalStorageAdapter (S3 TODO)</span>
+        <span class="arch-pill">lib/logger.ts — pino + redactions</span>
+        <span class="arch-pill">lib/notify.ts — INSERT notifications</span>
+        <span class="arch-pill">db/pool.ts — pg.Pool(max:10) + query() + transaction()</span>
+      </div>
+    </div>
+    <div class="arch-connector">↓ &nbsp;parameterised SQL</div>
+
+    <div class="arch-layer db">
+      <span class="lbl">L4 — Postgres</span>
+      <div class="arch-flex">
+        <span class="arch-pill">Users + STI (patient/doctor/admin/collector)</span>
+        <span class="arch-pill">Catalog (services · categories · departments)</span>
+        <span class="arch-pill">Schedules (doctor_centers · doctor_unavailability)</span>
+        <span class="arch-pill">Bookings hub + items</span>
+        <span class="arch-pill">Payments + invoices (triggers number them)</span>
+        <span class="arch-pill">Reports (multi-version per booking)</span>
+        <span class="arch-pill">Notifications + audit_log + webhook_events + clinic_settings</span>
+        <span class="arch-pill">serviceable_pincodes</span>
+      </div>
+    </div>
+    <div class="arch-connector">↓</div>
+
+    <div class="arch-layer ext">
+      <span class="lbl">L5 — External / storage</span>
+      <div class="arch-flex">
+        <span class="arch-pill">Local filesystem under STORAGE_LOCAL_PATH (reports · photos)</span>
+        <span class="arch-pill">S3 driver fallback to local with warn (TODO)</span>
+        <span class="arch-pill">MSG91 SMS (TODO)</span>
+        <span class="arch-pill">Razorpay orders + webhook (STUB)</span>
+        <span class="arch-pill">Resend email (optional)</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================== 05 ROLES ======================== -->
+<section id="roles" class="zone red">
+  <div class="banner">
+    <h2>05 · Roles &amp; what each can do</h2>
+    <p>Authorization is enforced by <code>requireAuth</code> + <code>requireRole(...)</code> in Express.</p>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Role</th>
+        <th>users.role</th>
+        <th>Login surface</th>
+        <th>What they do</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="role-badge v">VISITOR</span></td>
+        <td><em>none</em></td>
+        <td>none</td>
+        <td>Browse services, doctors, departments. Submit enquiry. Submit review (status=pending).</td>
+      </tr>
+      <tr>
+        <td><span class="role-badge p">PATIENT</span></td>
+        <td><code>patient</code></td>
+        <td>/auth/login · /auth/signup (email+password or OTP)</td>
+        <td>Book doctor appointment / test. Upload UPI proof at checkout. View own bookings, reports, invoices. Cancel a booking.</td>
+      </tr>
+      <tr>
+        <td><span class="role-badge d">DOCTOR</span></td>
+        <td><code>doctor</code></td>
+        <td>account created by admin with <code>is_login_enabled=FALSE</code> — currently no doctor portal</td>
+        <td>Identity only — referenced by booking_items.doctor_user_id and bookings.doctor_user_id.</td>
+      </tr>
+      <tr>
+        <td><span class="role-badge a">ADMIN</span></td>
+        <td><code>admin</code></td>
+        <td>/admin/login (same login API, different login page)</td>
+        <td>Full operations panel except settings rotations (depends on admin_role).</td>
+      </tr>
+      <tr>
+        <td><span class="role-badge s">SUPER ADMIN</span></td>
+        <td><code>super_admin</code></td>
+        <td>/admin/login</td>
+        <td>Everything admin does + edit clinic_settings + audit-log access.</td>
+      </tr>
+      <tr>
+        <td><span class="role-badge c">COLLECTOR</span></td>
+        <td><code>patient</code> + admin_role hint (or dedicated row)</td>
+        <td>account created by admin (no login UI yet)</td>
+        <td>Phlebotomist row — assigned to home-collection bookings via <code>bookings.assigned_staff_user_id</code>.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ======================== 06 FEATURE MATRIX ======================== -->
+<section id="features" class="zone">
+  <div class="banner">
+    <h2>06 · Full feature matrix</h2>
+    <p>What is in the box, grouped by area. Tagged Implemented / Stub / TODO based on observed code state.</p>
+  </div>
+
+  <div class="grid-2">
+
+    <div class="panel">
+      <h3>Public marketing (Phase 1)</h3>
+      <ul>
+        <li>Home hero with bilingual EN/BN services. <span class="chip s">Implemented</span></li>
+        <li>Service catalog with category filter + search. <span class="chip s">Implemented</span></li>
+        <li>Service detail with prep instructions + price. <span class="chip s">Implemented</span></li>
+        <li>Doctors directory + profile with reviews. <span class="chip s">Implemented</span></li>
+        <li>Departments directory. <span class="chip s">Implemented</span></li>
+        <li>Contact form (POST /enquiries, rate-limited). <span class="chip s">Implemented</span></li>
+        <li>Feedback / review form (POST /reviews → moderation). <span class="chip s">Implemented</span></li>
+        <li>Privacy + Terms static pages. <span class="chip s">Implemented</span></li>
+        <li>"Book Home Visit" CTA → preferredVisitType sticks. <span class="chip s">Implemented</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="cyan">Auth &amp; identity</h3>
+      <ul>
+        <li>Patient signup (mobile + optional email + password). <span class="chip s">Implemented</span></li>
+        <li>Patient login (email + password). <span class="chip s">Implemented</span></li>
+        <li>Patient login (mobile + OTP) — auto-creates row. <span class="chip a">SMS gateway TODO</span></li>
+        <li>Admin login at /admin/login. <span class="chip s">Implemented</span></li>
+        <li>GET /auth/me re-reads users row. <span class="chip s">Implemented</span></li>
+        <li>PATCH /me — partial profile update. <span class="chip s">Implemented</span></li>
+        <li>Change password (bcrypt). <span class="chip s">Implemented</span></li>
+        <li>Logout (clears JWT + zustand). <span class="chip s">Implemented</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="amber">Booking — Doctor</h3>
+      <ul>
+        <li>Live slot grid from doctor_centers.schedule. <span class="chip s">Implemented</span></li>
+        <li>Visit type: in_clinic | home_visit. <span class="chip s">Implemented</span></li>
+        <li>3-step wizard + zod-validated submit. <span class="chip s">Implemented</span></li>
+        <li>UPI proof upload (multipart). <span class="chip s">Implemented</span></li>
+        <li>Atomic INSERT bookings + items + invoice + payment. <span class="chip s">Implemented</span></li>
+        <li>"No centers configured" guard. <span class="chip s">Implemented</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="amber">Booking — Test / Package</h3>
+      <ul>
+        <li>Multi-item cart (persisted to localStorage). <span class="chip s">Implemented</span></li>
+        <li>Pincode serviceability gate. <span class="chip s">Implemented</span></li>
+        <li>Home-visit charge fetched per-pincode. <span class="chip s">Implemented</span></li>
+        <li>Home-collection slot picker. <span class="chip a">STUB hardcoded slots</span></li>
+        <li>Atomic INSERT with N booking_items. <span class="chip s">Implemented</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="pink">Payments</h3>
+      <ul>
+        <li>Manual UPI QR + screenshot/PDF proof (5 MB). <span class="chip s">Implemented</span></li>
+        <li>Optional UTR reference. <span class="chip s">Implemented</span></li>
+        <li>Two-stage flow: in_progress → confirmed. <span class="chip s">Implemented</span></li>
+        <li>Admin re-verify queue + bell badge. <span class="chip s">Implemented</span></li>
+        <li>Idempotent re-verify (CTE). <span class="chip s">Implemented</span></li>
+        <li>Offline payment record (cash/card/cheque/UPI QR offline). <span class="chip s">Implemented</span></li>
+        <li>FOR UPDATE recompute paid/balance. <span class="chip s">Implemented</span></li>
+        <li>Razorpay orders + webhook. <span class="chip a">STUB preserved</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="violet">Reports &amp; invoices</h3>
+      <ul>
+        <li>Admin upload any format, 25 MB cap. <span class="chip s">Implemented</span></li>
+        <li>Multi-version per booking. <span class="chip s">Implemented</span></li>
+        <li>Standalone reports page + booking_code lookup. <span class="chip s">Implemented</span></li>
+        <li>Patient signed-URL download (15-min). <span class="chip s">Implemented</span></li>
+        <li>Soft-delete reports. <span class="chip s">Implemented</span></li>
+        <li>Auto invoice number via trigger. <span class="chip s">Implemented</span></li>
+        <li>Patient + admin PDF (same renderer). <span class="chip s">Implemented</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3>Admin operations</h3>
+      <ul>
+        <li>Bookings list with filters + status dropdown. <span class="chip s">Implemented</span></li>
+        <li>Walk-in bill creator (catalog + custom items). <span class="chip s">Implemented</span></li>
+        <li>Home Collection Kanban board. <span class="chip s">Implemented</span></li>
+        <li>Collector accounts CRUD (with BYTEA photo). <span class="chip s">Implemented</span></li>
+        <li>Dispatch + stage transitions. <span class="chip s">Implemented</span></li>
+        <li>Patients list. <span class="chip s">Implemented</span></li>
+        <li>Enquiries triage. <span class="chip s">Implemented</span></li>
+        <li>Reviews moderation. <span class="chip s">Implemented</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="cyan">Catalog admin</h3>
+      <ul>
+        <li>Service categories CRUD + count badges. <span class="chip s">Implemented</span></li>
+        <li>Services CRUD + package toggle. <span class="chip s">Implemented</span></li>
+        <li>Departments CRUD + doctors count. <span class="chip s">Implemented</span></li>
+        <li>Doctors CRUD + photo + centers + schedule. <span class="chip s">Implemented</span></li>
+        <li>Serviceable pincodes CRUD. <span class="chip s">Implemented</span></li>
+        <li>Clinic settings (name · UPI · GSTIN · policies). <span class="chip s">Implemented</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="lime">Dashboards &amp; analytics</h3>
+      <ul>
+        <li>Admin dashboard, 60s auto-refresh. <span class="chip s">Implemented</span></li>
+        <li>Today's schedule list. <span class="chip s">Implemented</span></li>
+        <li>Analytics page with 4 PieCharts + ComposedChart. <span class="chip s">Implemented</span></li>
+        <li>CSV multi-section export. <span class="chip s">Implemented</span></li>
+        <li>recharts lazy-loaded (~119 kB gzipped). <span class="chip s">Implemented</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="pink">Cross-cutting</h3>
+      <ul>
+        <li>Notification feed (per-user + broadcast). <span class="chip s">Implemented</span></li>
+        <li>Bell with 30s poll + open-refetch. <span class="chip s">Implemented</span></li>
+        <li>Automatic audit log on every 2xx mutation. <span class="chip s">Implemented</span></li>
+        <li>Rate limits (200/min global · 5/min public writes). <span class="chip s">Implemented</span></li>
+        <li>Pino redactions on logs. <span class="chip s">Implemented</span></li>
+        <li>Feature flag VITE_PHASE_2_ENABLED. <span class="chip s">Implemented</span></li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+
+<!-- ======================== 07 PAYMENTS ======================== -->
+<section id="payments" class="zone pink">
+  <div class="banner">
+    <h2>07 · Payment system — every mode, every state</h2>
+    <p>Three sources × five states × five methods. Tables show the exact column transitions.</p>
+  </div>
+
+  <div class="panel">
+    <h3 class="pink">payment_source enum (what kind of payment row)</h3>
+    <table>
+      <thead><tr><th>payment_source</th><th>When used</th><th>Required fields</th></tr></thead>
+      <tbody>
+        <tr><td><code>upi_manual</code></td><td>Patient checkout — UPI QR + uploaded screenshot/PDF proof</td><td><code>payment_proof_bytes + mime</code>, <code>verified_at=NULL</code> until admin re-verifies</td></tr>
+        <tr><td><code>offline</code></td><td>Walk-in bill + admin recording in-person payment</td><td><code>collected_by_user_id</code> (the staff who took the money)</td></tr>
+        <tr><td><code>razorpay</code></td><td>Preserved for future automated checkout</td><td><code>razorpay_order_id</code> + webhook-driven <code>payment_id</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid-2">
+
+    <div class="panel">
+      <h3 class="pink">Mode A — Manual UPI (current default)</h3>
+      <p>Patient scans QR / pays UPI ID, uploads a screenshot/PDF + optional UTR. Slot locks immediately. Admin re-verifies in person at the clinic / at sample collection.</p>
+      <table class="state">
+        <thead><tr><th>Stage</th><th>bookings.booking_status</th><th>bookings.payment_status</th><th>payments.payment_status</th><th>payments.verified_at</th></tr></thead>
+        <tbody>
+          <tr><td>Patient submits proof at /book/*</td><td class="wait">in_progress</td><td>partial / paid</td><td class="ok">captured</td><td class="wait">NULL</td></tr>
+          <tr><td>Admin opens Re-Verify modal</td><td>in_progress</td><td>partial / paid</td><td>captured</td><td>NULL (yet)</td></tr>
+          <tr><td>Admin clicks Re-verify</td><td class="ok">confirmed</td><td>partial / paid</td><td class="ok">captured</td><td class="ok">NOW()</td></tr>
+        </tbody>
+      </table>
+      <p class="muted">Idempotent: CTE only fires when <code>verified_at IS NULL</code>; a second click returns the already-verified row.</p>
+    </div>
+
+    <div class="panel">
+      <h3 class="pink">Mode B — Offline (walk-in &amp; in-person top-ups)</h3>
+      <p>Receptionist captures payment with the walk-in bill, or records a top-up against an existing booking. <code>collected_by_user_id</code> is mandatory so we know who took the cash.</p>
+      <table>
+        <thead><tr><th>method</th><th>Context</th></tr></thead>
+        <tbody>
+          <tr><td><code>cash</code></td><td>Walk-in patient hands over cash at reception</td></tr>
+          <tr><td><code>upi_qr_offline</code></td><td>Static QR scan at reception (no online verification yet)</td></tr>
+          <tr><td><code>card_swipe</code></td><td>POS terminal at reception</td></tr>
+          <tr><td><code>cheque</code></td><td>Manual capture, cleared later (no auto-clearing logic)</td></tr>
+        </tbody>
+      </table>
+      <p class="muted">After insert, the handler takes a <code>FOR UPDATE</code> lock on the booking row and recomputes <code>paid_amount / balance_amount / payment_status</code> from <code>SUM(amount − refunded_amount) WHERE payment_status IN (captured, authorized)</code>.</p>
+    </div>
+
+    <div class="panel">
+      <h3 class="pink">Mode C — Razorpay (stub, for future)</h3>
+      <p>Wiring is preserved so the project can switch back when the clinic activates a merchant account.</p>
+      <ul>
+        <li><code>POST /payments/create-order</code> currently inserts a row with <code>razorpay_order_id='order_mock_&lt;ts&gt;'</code>.</li>
+        <li><code>POST /webhooks/razorpay</code> logs into <code>webhook_events</code> with <code>ON CONFLICT (event_id) DO NOTHING</code> — <strong>signature verification not yet wired</strong>.</li>
+        <li><code>POST /bookings/:id/confirm-payment-stub</code> exists as the legacy "automatic-confirm" path; no longer auto-fired by the frontend.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="pink">Refunds</h3>
+      <p>No dedicated table — refunds use the <code>payments.refunded_amount</code> accumulator (<code>≤ amount</code>) plus <code>razorpay_refund_id / refund_reason / refunded_at</code>. The recompute logic subtracts <code>refunded_amount</code> from the sum so booking balances stay correct.</p>
+    </div>
+
+  </div>
+
+  <div class="panel">
+    <h3 class="cyan">Pricing math (booking creation)</h3>
+    <table>
+      <thead><tr><th>Field</th><th>Doctor appointment</th><th>Test / package booking</th><th>Walk-in</th></tr></thead>
+      <tbody>
+        <tr><td><code>subtotal_amount</code></td><td>doctor.consultation_fee</td><td>SUM(unit_price × quantity)</td><td>SUM(unit_price × quantity)</td></tr>
+        <tr><td><code>home_visit_charge</code></td><td>0 / per-pincode</td><td>per-pincode if home_visit</td><td>0</td></tr>
+        <tr><td><code>total_amount</code></td><td>subtotal + home_visit_charge</td><td>subtotal + home_visit_charge</td><td>subtotal</td></tr>
+        <tr><td><code>advance_amount</code></td><td>round(total / 2)</td><td>round(total / 2)</td><td>amount paid at counter</td></tr>
+        <tr><td><code>balance_amount</code></td><td>total − advance</td><td>total − advance</td><td>total − paid</td></tr>
+        <tr><td><code>payment_status</code></td><td>partial / paid</td><td>partial / paid</td><td>pending / partial / paid</td></tr>
+        <tr><td><code>booking_status (on create)</code></td><td>in_progress (until re-verify)</td><td>in_progress (until re-verify)</td><td>completed if paid, else in_progress</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ======================== 08 USER JOURNEYS ======================== -->
+<section id="journeys" class="zone cyan">
+  <div class="banner">
+    <h2>08 · End-to-end user journeys</h2>
+    <p>Narratives for each persona — exact pages, hooks, endpoints, and DB writes at every step.</p>
+  </div>
+
+  <div class="panel">
+    <h3 class="cyan">Journey A · Patient books a test with home collection</h3>
+    <div class="steps">
+      <div class="step"><div class="body"><div class="t">Browse services on /services</div><div class="d">ServicesPage → useServices() → GET /services → SELECT services.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Add 2–3 tests to cart</div><div class="d">useCartStore.addItem() persists to localStorage <code>arogya-cart</code>.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Open /cart → click "Proceed"</div><div class="d">Redirects to /book/test if signed in; otherwise /auth/login with state.from.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Sign up if needed</div><div class="d">SignupPage → useAuthStore.signUp() → POST /auth/signup → INSERT users (role=patient, password_hash via bcrypt) → returns JWT.</div></div></div>
+      <div class="step"><div class="body"><div class="t">BookTestPage step 2: choose home collection</div><div class="d">Enter pincode → GET /serviceable-pincodes/check?pincode=. If serviceable, the home-visit charge appears and the slot grid unlocks.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Pick slot</div><div class="d">useHomeCollectionSlots(date, pincode) → GET /home-collection/slots (currently STUB: 8 slots).</div></div></div>
+      <div class="step"><div class="body"><div class="t">Step 3: confirm + pay</div><div class="d">UpiPaymentModal renders QR (react-qr-code) from <code>useClinicUpi()</code>. Patient pays externally, uploads screenshot/PDF (≤5 MB) + optional UTR.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Submit booking (multipart)</div><div class="d">useCreateTestBooking() → POST /bookings/test (FormData). Single transaction inserts bookings + N booking_items + invoices (trigger fills number) + payments (upi_manual, captured, verified_at=NULL).</div></div></div>
+      <div class="step"><div class="body"><div class="t">Redirect to /payment/callback</div><div class="d">PaymentCallbackPage loads useMyBooking(id), shows status "In progress · awaiting verification", Download Invoice button works (ownership-checked PDF).</div></div></div>
+      <div class="step"><div class="body"><div class="t">Admin re-verifies later</div><div class="d">AdminPaymentVerificationsPage → POST /admin/payments/:id/re-verify → status flips to "Confirmed", patient notification fires.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Sample collection day</div><div class="d">Home Collection Board admin assigns a collector → collection_status transitions not_assigned → assigned → en_route → collected → received_at_lab; each transition fires a notification.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Result uploaded</div><div class="d">Admin opens /admin/reports, types booking_code (AROGYA-TEST-…), uploads N report files. Patient sees them on /dashboard/reports and downloads via signed URL.</div></div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 class="cyan">Journey B · Patient books a doctor appointment</h3>
+    <div class="steps">
+      <div class="step"><div class="body"><div class="t">Browse doctors on /doctors</div><div class="d">DoctorsPage → useDoctors() → GET /doctors (active + verified) → photo via public /doctors/:id/photo blob.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Open doctor profile → "Book appointment"</div><div class="d">Navigates to /book/doctor/:doctorId (requireAuth).</div></div></div>
+      <div class="step"><div class="body"><div class="t">Step 1: pick date + slot</div><div class="d">useDoctorSlots(id, date, centerId, visitType) → GET /doctors/:id/slots → live generator reads doctor_centers.schedule, subtracts existing bookings and doctor_unavailability.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Step 2: contact + address</div><div class="d">Form prefilled from useAuthStore user; uses patientInfoSchema (zod).</div></div></div>
+      <div class="step"><div class="body"><div class="t">Step 3: pay + upload proof</div><div class="d">Same UpiPaymentModal pattern. POST /bookings/doctor-appointment (multipart) — atomic INSERT bookings + booking_items(doctor_consultation) + invoices + payments.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Status badge sub-line</div><div class="d">BookingStatusBadge renders "Advance ₹250 paid · Balance ₹250 due at visit" instead of generic status text.</div></div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 class="cyan">Journey C · Receptionist creates a walk-in bill</h3>
+    <div class="steps">
+      <div class="step"><div class="body"><div class="t">Open /admin/walk-in-bills/new</div><div class="d">WalkInBillPage — patient snapshot + items[] (catalog | custom) + optional payment.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Submit</div><div class="d">useCreateWalkInBill() → POST /admin/walk-in-bills. Single transaction does: resolve catalog → normalize → compute totals → INSERT bookings (origin=walk_in, visit_type=in_clinic, scheduled_date=today) → N × INSERT booking_items → INSERT payments (offline, captured) if amount &gt; 0 → INSERT invoices (trigger fills number).</div></div></div>
+      <div class="step"><div class="body"><div class="t">Hand patient the printed bill</div><div class="d">Admin uses the Download Invoice button on the new booking; pdfkit streams an A4 PDF with clinic header from clinic_settings.</div></div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 class="cyan">Journey D · Admin onboards a new doctor</h3>
+    <div class="steps">
+      <div class="step"><div class="body"><div class="t">Open /admin/doctors → "Add doctor"</div><div class="d">AdminDoctorEditPage with WeeklyScheduleEditor.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Fill profile + add center(s) + schedule</div><div class="d">Each row uses a checkbox-per-weekday + start/end + slot_minutes + buffer_minutes + optional lunch window → emits a WeeklySchedule JSON.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Submit</div><div class="d">useCreateDoctor() → POST /admin/doctors (with nested centers[]). Transaction inserts users (role=doctor, is_login_enabled=FALSE) + N doctor_centers.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Upload photo</div><div class="d">useUploadDoctorPhoto(id) → POST /admin/doctors/:id/photo (multer 5 MB). Bytes written to users.profile_photo_bytes; profile_photo_url set to /doctors/:id/photo.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Verify on public site</div><div class="d">Public /doctors/:id renders the new doctor with ?v=updated_at cache-bust so the new photo loads.</div></div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 class="cyan">Journey E · Admin uploads reports against any booking</h3>
+    <div class="steps">
+      <div class="step"><div class="body"><div class="t">Open /admin/reports</div><div class="d">AdminReportsPage shows recent uploads. The page accepts free-text and a booking_code lookup.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Type AROGYA-TEST-… code</div><div class="d">lookupBookingByCode() → GET /admin/booking-lookup?code= → resolves to numeric id + patient_snapshot.</div></div></div>
+      <div class="step"><div class="body"><div class="t">Pick file(s), choose report_type</div><div class="d">For each file: useUploadReport(id) → POST /admin/bookings/:id/reports (multer, 25 MB, no MIME whitelist).</div></div></div>
+      <div class="step"><div class="body"><div class="t">Cache invalidation</div><div class="d">Mutation invalidates adminBooking(id) + myReports + ['admin','reports'] — patient dashboard shows the new report on next refetch.</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================== 09 MODULE PIPELINES ======================== -->
+<section id="modules" class="zone">
+  <div class="banner">
+    <h2>09 · Module-by-module connectivity pipelines</h2>
+    <p>page → hook → http → handler → SQL → table. Same pattern repeated for every flow.</p>
+  </div>
+
+  <div class="module" data-num="P · 01"><div class="mod-title"><h3 class="mod">Public catalog browse</h3><span class="arrow-key">visitor → public api → catalog tables</span></div>
+    <div class="flow">
+      <div class="node user"><div class="kind">user</div><div class="name">Visitor</div><div class="sub">no auth</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">Home · Services · Doctors · Departments</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">queries.ts</div><div class="fn">useServices · useService(slug)<br/>useDoctors · useDoctor(id)<br/>useDepartments · useServiceCategories<br/>useReviews(doctorId?)</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">api</div><div class="name">publicRoutes.ts</div><div class="fn">GET /services · /services/:slug<br/>GET /doctors · /doctors/:id<br/>GET /departments · /service-categories<br/>GET /reviews?doctor_id=</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">SELECT</div><div class="fn">services · service_categories<br/>users (verified+active doctors)<br/>doctor_centers · departments · reviews</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="P · 02"><div class="mod-title"><h3 class="mod">Public write — enquiry + review</h3><span class="arrow-key">rate-limited 5/min/IP</span></div>
+    <div class="flow">
+      <div class="node user"><div class="kind">user</div><div class="name">Visitor</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">ContactPage · FeedbackPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useSubmitEnquiry()<br/>useSubmitReview()</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">api</div><div class="name">publicRoutes.ts</div><div class="fn">POST /enquiries (enquirySchema)<br/>POST /reviews (reviewSchema)</div><div class="sub">publicWriteLimiter</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">INSERT</div><div class="fn">enquiries (status=new)<br/>reviews (status=pending)</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="A · 03"><div class="mod-title"><h3 class="mod">Auth · login / signup / OTP / me</h3><span class="arrow-key">jwt + bcrypt + in-memory otp store</span></div>
+    <div class="flow">
+      <div class="node user"><div class="kind">user</div><div class="name">Patient / Admin</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">LoginPage · SignupPage · AdminLoginPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">store</div><div class="name">useAuthStore</div><div class="fn">signInWithEmail · signUp<br/>sendOtp · verifyOtp<br/>refresh · logout · updateProfile</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">api</div><div class="name">authRoutes.ts</div><div class="fn">POST /auth/signup · /login<br/>POST /auth/otp/send · /otp/verify<br/>GET /auth/me<br/>POST /auth/change-password</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">users</div><div class="fn">SELECT/INSERT/UPDATE<br/>users_login_capability_chk<br/>users_email_login_idx</div></div>
+    </div>
+    <div class="flow">
+      <div class="node event"><div class="kind">side-effect</div><div class="name">signJwt() → localStorage arogya-jwt</div></div>
+      <div class="arrow dashed">⇢</div>
+      <div class="node api"><div class="kind">middleware</div><div class="name">requireAuth · requireRole</div><div class="sub">re-SELECT users by sub on every request</div></div>
+      <div class="arrow dashed">⇢</div>
+      <div class="node event"><div class="kind">on 401</div><div class="name">axios clears token</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="B · 04"><div class="mod-title"><h3 class="mod">Doctor appointment booking</h3><span class="arrow-key">live slots → multipart submit → atomic txn</span></div>
+    <div class="flow">
+      <div class="node user"><div class="kind">user</div><div class="name">Patient</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">BookDoctorPage</div><div class="sub">WizardSteps · DateStrip · SlotGrid</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useDoctor · useDoctorSlots · useCreateDoctorBooking</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">api</div><div class="name">phase2Routes.ts</div><div class="fn">GET /doctors/:id/slots (live)<br/>POST /bookings/doctor-appointment (multipart)</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">single transaction</div><div class="fn">INSERT bookings (doctor_appointment)<br/>INSERT booking_items (doctor_consultation)<br/>INSERT invoices + payments(upi_manual)</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="B · 05"><div class="mod-title"><h3 class="mod">Test / package booking</h3><span class="arrow-key">cart · pincode gate · multipart</span></div>
+    <div class="flow">
+      <div class="node user"><div class="kind">user</div><div class="name">Patient</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">CartPage → BookTestPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook gate"><div class="kind">gate</div><div class="name">checkServiceablePincode()</div><div class="fn">GET /serviceable-pincodes/check</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useHomeCollectionSlots · useCreateTestBooking</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">api</div><div class="name">POST /bookings/test</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">bookings + N items + invoice + payment</div><div class="sub">code AROGYA-TEST-YYYYMM-NNNNNN</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="$ · 06"><div class="mod-title"><h3 class="mod">Manual UPI payment + admin re-verify</h3><span class="arrow-key">qr modal · upload proof · admin queue</span></div>
+    <div class="flow">
+      <div class="node user"><div class="kind">user</div><div class="name">Patient</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">component</div><div class="name">UpiPaymentModal</div><div class="fn">react-qr-code · buildUpiPaymentLink()<br/>file picker · UTR field</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useClinicUpi()</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">api</div><div class="name">GET /clinic/upi (public)</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">clinic_settings</div><div class="fn">upi_id · upi_display_name</div></div>
+    </div>
+    <div class="flow">
+      <div class="node user admin"><div class="kind">user</div><div class="name">Admin</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">AdminPaymentVerificationsPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">usePendingReVerifyPayments<br/>useReVerifyPayment</div></div>
+      <div class="arrow">→</div>
+      <div class="node api admin"><div class="kind">api</div><div class="name">phase2Routes.ts (admin)</div><div class="fn">GET /admin/payments/pending-re-verify<br/>GET /admin/payments/:id/proof<br/>POST /admin/payments/:id/re-verify</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">payments (CTE)</div><div class="fn">WITH upd AS UPDATE WHERE verified_at IS NULL<br/>sets verified_by_user_id · verified_at</div></div>
+      <div class="arrow dashed">⇢</div>
+      <div class="node event"><div class="kind">notify</div><div class="name">INSERT notifications</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="D · 07"><div class="mod-title"><h3 class="mod">Patient dashboard — bookings &amp; reports</h3><span class="arrow-key">own-data reads · cancel</span></div>
+    <div class="flow">
+      <div class="node user"><div class="kind">user</div><div class="name">Patient</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">pages</div><div class="name">Overview · Appointments · Tests<br/>MyBookings · BookingDetail · Reports · Profile</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useMyBookings · useMyBooking(id)<br/>useMyReports · downloadReport<br/>downloadMyInvoicePdf · useCancelMyBooking</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">api</div><div class="name">phase2Routes.ts</div><div class="fn">GET /bookings · /bookings/:id<br/>GET /reports · /reports/:id/download<br/>GET /bookings/:id/invoice.pdf<br/>POST /bookings/:id/cancel</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">bookings · reports · invoices</div><div class="sub">subqueries: doctor_name · items_summary · reports_count</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="A · 08"><div class="mod-title"><h3 class="mod">Admin bookings + payments</h3><span class="arrow-key">list · detail · status · record payment</span></div>
+    <div class="flow">
+      <div class="node user admin"><div class="kind">user</div><div class="name">Admin</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">AdminBookingsPage · AdminBookingDetailPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useAdminBookings · useAdminBooking<br/>useUpdateBookingStatus · useRecordPayment</div></div>
+      <div class="arrow">→</div>
+      <div class="node api admin"><div class="kind">api</div><div class="name">phase2Routes.ts (admin)</div><div class="fn">GET /admin/bookings · /admin/bookings/:id<br/>PATCH /admin/bookings/:id/status<br/>POST /admin/bookings/:id/payments</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">bookings + payments (FOR UPDATE)</div></div>
+      <div class="arrow dashed">⇢</div>
+      <div class="node event"><div class="kind">cache</div><div class="name">invalidate admin + patient</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="A · 09"><div class="mod-title"><h3 class="mod">Walk-in bills</h3><span class="arrow-key">one transaction: booking + items + payment + invoice</span></div>
+    <div class="flow">
+      <div class="node user admin"><div class="kind">user</div><div class="name">Receptionist</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">WalkInBillPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useCreateWalkInBill()</div></div>
+      <div class="arrow">→</div>
+      <div class="node api admin"><div class="kind">api</div><div class="name">POST /admin/walk-in-bills</div><div class="fn">walkInItemSchema (discriminated union)</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">single transaction</div><div class="fn">INSERT bookings (origin=walk_in)<br/>N × INSERT booking_items<br/>INSERT payments(offline) · INSERT invoices</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="R · 10"><div class="mod-title"><h3 class="mod">Reports — upload &amp; download</h3><span class="arrow-key">booking_code lookup · multer · signed url</span></div>
+    <div class="flow">
+      <div class="node user admin"><div class="kind">user</div><div class="name">Admin</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">AdminReportsPage · AdminBookingDetailPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">helper</div><div class="name">lookupBookingByCode(code)</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useUploadReport(bookingId)</div></div>
+      <div class="arrow">→</div>
+      <div class="node api admin"><div class="kind">api</div><div class="name">POST /admin/bookings/:id/reports</div><div class="sub">multer 25 MB · no MIME whitelist</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db + storage</div><div class="name">reports + LocalStorageAdapter</div></div>
+    </div>
+    <div class="flow">
+      <div class="node user"><div class="kind">user</div><div class="name">Patient</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">helper</div><div class="name">downloadReport(id)</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">api</div><div class="name">GET /reports/:id/download</div><div class="fn">storage.getSignedUrl(900s)</div></div>
+      <div class="arrow">→</div>
+      <div class="node event"><div class="kind">browser</div><div class="name">window.open(url)</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="I · 11"><div class="mod-title"><h3 class="mod">Invoices — auto-numbered PDF</h3><span class="arrow-key">trigger fills number · same pdf for patient + admin</span></div>
+    <div class="flow">
+      <div class="node event"><div class="kind">on each booking</div><div class="name">INSERT invoices ('')</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">trigger</div><div class="name">generate_invoice_number</div><div class="fn">INV-YYYYMM-NNNNNN (Asia/Kolkata)</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">api</div><div class="name">streamInvoicePdf(bookingId)</div><div class="fn">loads clinic_settings · pdfkit A4</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">routes</div><div class="name">GET /bookings/:id/invoice.pdf (patient)<br/>GET /admin/bookings/:id/invoice.pdf (admin)</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">client</div><div class="name">downloadInvoicePdf(id, code)</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="C · 12"><div class="mod-title"><h3 class="mod">Catalog admin (services · categories · departments · pincodes)</h3><span class="arrow-key">crud · soft delete · cache fan-out</span></div>
+    <div class="flow">
+      <div class="node user admin"><div class="kind">user</div><div class="name">Admin</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">pages</div><div class="name">AdminServicesPage · AdminServiceCategoriesPage<br/>AdminDepartmentsPage · AdminPincodesPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useAdmin{Services|ServiceCategories|Departments|Pincodes}<br/>useCreate · useUpdate · useDelete (× 4)</div></div>
+      <div class="arrow">→</div>
+      <div class="node api admin"><div class="kind">api</div><div class="name">GET/POST/PATCH/DELETE<br/>/admin/services · /admin/service-categories<br/>/admin/departments · /admin/serviceable-pincodes</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">soft-delete: is_active=FALSE</div></div>
+      <div class="arrow dashed">⇢</div>
+      <div class="node event"><div class="kind">cache</div><div class="name">invalidate admin + public + dropdowns</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="C · 13"><div class="mod-title"><h3 class="mod">Doctor management</h3><span class="arrow-key">users + doctor_centers + BYTEA photo</span></div>
+    <div class="flow">
+      <div class="node user admin"><div class="kind">user</div><div class="name">Admin</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">AdminDoctorsPage · AdminDoctorEditPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useAdminDoctors · useAdminDoctor<br/>useCreateDoctor · useUpdateDoctor<br/>useUploadDoctorPhoto · useUpsertCenter · useDeleteCenter</div></div>
+      <div class="arrow">→</div>
+      <div class="node api admin"><div class="kind">api</div><div class="name">phase2 + uploadRoutes</div><div class="fn">POST /admin/doctors (txn users + centers[])<br/>POST /admin/doctors/:id/photo (multer)<br/>POST/PATCH/DELETE centers</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">users + doctor_centers</div><div class="sub">schedule/home_visit_schedule JSONB · profile_photo_bytes BYTEA</div></div>
+      <div class="arrow dashed">⇢</div>
+      <div class="node event"><div class="kind">public</div><div class="name">GET /doctors/:id/photo (BYTEA stream)</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="C · 14"><div class="mod-title"><h3 class="mod">Home collection workflow</h3><span class="arrow-key">collectors · kanban · stage transitions</span></div>
+    <div class="flow">
+      <div class="node user admin"><div class="kind">user</div><div class="name">Admin</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">AdminCollectorsPage · HomeCollectionBoardPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useAdminCollectors · useCollectionStaff<br/>useHomeCollections · useUpdateCollection<br/>resolveCollectorPhotoUrl</div></div>
+      <div class="arrow">→</div>
+      <div class="node api admin"><div class="kind">api</div><div class="name">phase2Routes (admin collectors)</div><div class="fn">CRUD /admin/collectors[/:id]<br/>POST /admin/collectors/:id/photo<br/>GET /admin/home-collections<br/>PATCH /admin/home-collections/:id</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">users (collector) + bookings</div><div class="fn">collection_status: not_assigned → assigned → en_route → collected → received_at_lab</div></div>
+      <div class="arrow dashed">⇢</div>
+      <div class="node event"><div class="kind">notify</div><div class="name">INSERT notifications (patient + collector)</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="N · 15"><div class="mod-title"><h3 class="mod">Notification feed</h3><span class="arrow-key">domain event · 30s poll · deep-link</span></div>
+    <div class="flow">
+      <div class="node event"><div class="kind">trigger</div><div class="name">backend domain event</div><div class="fn">proof_submitted · reverified<br/>collector_assigned · collection_status_changed<br/>report_uploaded · status_changed</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">notifications + notification_reads</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">api</div><div class="name">GET /notifications/mine</div><div class="fn">LEFT JOIN notification_reads (read-by-me)</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useMyNotifications (30s poll)<br/>useMarkNotificationRead · useMarkAllNotificationsRead</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">component</div><div class="name">NotificationBell.tsx</div><div class="sub">badge · dropdown · Link to={n.link}</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="D · 16"><div class="mod-title"><h3 class="mod">Dashboard &amp; analytics</h3><span class="arrow-key">single payload · lazy recharts · csv export</span></div>
+    <div class="flow">
+      <div class="node user admin"><div class="kind">user</div><div class="name">Admin</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">pages</div><div class="name">AdminDashboardPage (60s)<br/>AdminAnalyticsPage (lazy)</div></div>
+      <div class="arrow">→</div>
+      <div class="node hook"><div class="kind">hook</div><div class="name">useAdminDashboard · useAdminAnalytics(days)</div></div>
+      <div class="arrow">→</div>
+      <div class="node api admin"><div class="kind">api</div><div class="name">GET /admin/dashboard · /admin/analytics?days=N</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">bookings · payments · booking_items · users</div><div class="fn">Promise.all × 7 · generate_series for empty days</div></div>
+      <div class="arrow dashed">⇢</div>
+      <div class="node event"><div class="kind">client</div><div class="name">CSV multi-section export</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="X · 17"><div class="mod-title"><h3 class="mod">Audit log (automatic)</h3><span class="arrow-key">res.on('finish') · classify · fire-and-forget</span></div>
+    <div class="flow">
+      <div class="node user"><div class="kind">any role</div><div class="name">authenticated mutating request</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">middleware</div><div class="name">auditLogMiddleware</div><div class="fn">if 2xx · method ∈ {POST,PATCH,PUT,DELETE}<br/>· req.user set · not in SKIP_PATTERNS</div></div>
+      <div class="arrow">→</div>
+      <div class="node api"><div class="kind">helper</div><div class="name">classify(method, path)</div><div class="fn">e.g. services.create · payments.re-verify · bookings.status</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">audit_log</div><div class="fn">actor_user_id · actor_role · action<br/>entity_type · entity_id · ip · user_agent</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">AdminAuditLogPage</div></div>
+    </div>
+  </div>
+
+  <div class="module" data-num="S · 18"><div class="mod-title"><h3 class="mod">Clinic settings</h3><span class="arrow-key">jsonb key/value → invoice header + checkout VPA</span></div>
+    <div class="flow">
+      <div class="node user admin"><div class="kind">user</div><div class="name">Super Admin</div></div>
+      <div class="arrow">→</div>
+      <div class="node page"><div class="kind">page</div><div class="name">AdminSettingsPage</div></div>
+      <div class="arrow">→</div>
+      <div class="node api admin"><div class="kind">api</div><div class="name">GET/PATCH /admin/clinic-settings/:key</div></div>
+      <div class="arrow">→</div>
+      <div class="node db"><div class="kind">db</div><div class="name">clinic_settings</div><div class="fn">clinic_name · address · phone · email · gstin<br/>upi_id · upi_display_name · business_hours<br/>default_tax_percent · cancellation_window_hours<br/>refund_policy · report_retention_days</div></div>
+      <div class="arrow dashed">⇢</div>
+      <div class="node event"><div class="kind">consumers</div><div class="name">streamInvoicePdf · GET /clinic/upi</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================== 10 DB GRAPH ======================== -->
+<section id="db" class="zone violet">
+  <div class="banner">
+    <h2>10 · Database connection graph (the FK story)</h2>
+    <p>Five domains. Every table on a real flow above is here with its keys, indexes, and the relationships it joins on.</p>
+  </div>
+
+  <div class="panel">
+    <h3 class="violet">Domain map (high level)</h3>
+    <p>users (STI) is the actor table. bookings is the hub: it FK-joins to users (patient / doctor / assigned_staff), to doctor_centers, and is the parent of booking_items, payments, invoices, reports. Catalog tables (services, service_categories, departments) reference each other and feed booking_items.service_id and users.department_id. Notifications and audit_log are cross-cutting append-only logs. Clinic_settings + serviceable_pincodes are key/value configuration.</p>
+  </div>
+
+  <div class="schema-grid">
+
+    <div class="tbl">
+      <div class="hdr"><span class="nm">users</span><span class="pk">0002 (STI)</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span> <span class="typ">UUID</span></li>
+        <li><span class="uq">UQ</span> <span class="col">email</span> <span class="typ">CITEXT (partial)</span></li>
+        <li><span class="uq">UQ</span> <span class="col">mobile</span> <span class="typ">VARCHAR(15) (partial)</span></li>
+        <li><span class="nn">·</span> <span class="col">role</span> <span class="typ">patient|doctor|admin|super_admin</span></li>
+        <li><span class="nn">·</span> <span class="col">password_hash · is_active · is_login_enabled</span></li>
+        <li><span class="fk">FK</span> <span class="col">department_id</span> → departments.id</li>
+        <li><span class="col">profile_photo_bytes · profile_photo_mime · profile_photo_url</span></li>
+        <li><span class="col">consultation_fee · qualifications[] · about · speciality</span></li>
+        <li><span class="col">date_of_birth · gender · default_address JSONB</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl">
+      <div class="hdr"><span class="nm">departments</span><span class="pk">0003</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span> <span class="typ">BIGSERIAL</span></li>
+        <li><span class="uq">UQ</span> <span class="col">name · slug</span></li>
+        <li><span class="col">description · icon_url · banner_url · display_order · is_active</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl">
+      <div class="hdr"><span class="nm">service_categories</span><span class="pk">0004</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="uq">UQ</span> <span class="col">name · slug</span></li>
+        <li><span class="col">display_order · is_active</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl">
+      <div class="hdr"><span class="nm">services</span><span class="pk">0005</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="fk">FK</span> <span class="col">category_id</span> → service_categories</li>
+        <li><span class="uq">UQ</span> <span class="col">slug · test_key</span></li>
+        <li><span class="col">price · prep_instructions · sample_type · report_turnaround_hours</span></li>
+        <li><span class="col">is_package · package_service_ids JSONB · package_discount_percent</span></li>
+        <li><span class="col">services_name_trgm_idx (fuzzy search)</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl lime">
+      <div class="hdr"><span class="nm">doctor_centers</span><span class="pk">0006</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="fk">FK</span> <span class="col">doctor_user_id</span> → users (CASCADE)</li>
+        <li><span class="col">center_name · address · phone · city · pincode</span></li>
+        <li><span class="col">schedule JSONB (weekly)</span></li>
+        <li><span class="col">home_visit_schedule JSONB (nullable)</span></li>
+        <li><span class="col">consultation_fee_override</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl lime">
+      <div class="hdr"><span class="nm">doctor_unavailability</span><span class="pk">0007</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="fk">FK</span> <span class="col">doctor_user_id</span></li>
+        <li><span class="fk">FK</span> <span class="col">doctor_center_id (nullable = all)</span></li>
+        <li><span class="col">date · slot_start_time (NULL = whole day) · reason</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl amber">
+      <div class="hdr"><span class="nm">bookings</span><span class="pk">0008 · HUB</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="uq">UQ</span> <span class="col">booking_code</span> <span class="typ">trigger-generated</span></li>
+        <li><span class="fk">FK</span> <span class="col">patient_user_id</span> → users (nullable for walk-in)</li>
+        <li><span class="fk">FK</span> <span class="col">doctor_user_id</span> → users</li>
+        <li><span class="fk">FK</span> <span class="col">doctor_center_id</span> → doctor_centers</li>
+        <li><span class="fk">FK</span> <span class="col">assigned_staff_user_id</span> → users (collector)</li>
+        <li><span class="col">booking_type · booking_origin · visit_type</span></li>
+        <li><span class="col">booking_status · payment_status · collection_status</span></li>
+        <li><span class="col">subtotal · home_visit_charge · total · advance · balance</span></li>
+        <li><span class="col">scheduled_date · scheduled_start_time · slot_locked_until</span></li>
+        <li><span class="col">patient_snapshot JSONB · delivery_address JSONB</span></li>
+        <li><span class="uq">UQ</span> <span class="col">uq_active_slot</span> <span class="typ">(partial: anti-double-book)</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl amber">
+      <div class="hdr"><span class="nm">booking_items</span><span class="pk">0009</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="fk">FK</span> <span class="col">booking_id</span> → bookings</li>
+        <li><span class="fk">FK</span> <span class="col">service_id</span> → services (nullable when custom)</li>
+        <li><span class="fk">FK</span> <span class="col">doctor_user_id</span> (required for doctor_consultation)</li>
+        <li><span class="col">item_type · item_name · quantity · unit_price · total_price</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl pink">
+      <div class="hdr"><span class="nm">payments</span><span class="pk">0010 + 0024</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="fk">FK</span> <span class="col">booking_id</span> → bookings</li>
+        <li><span class="col">payment_source: razorpay | offline | upi_manual</span></li>
+        <li><span class="col">payment_method · payment_status · payment_type</span></li>
+        <li><span class="col">amount · refunded_amount</span></li>
+        <li><span class="col">payment_proof_bytes BYTEA · payment_proof_mime</span></li>
+        <li><span class="col">upi_reference · verified_by_user_id · verified_at</span></li>
+        <li><span class="col">collected_by_user_id (offline)</span></li>
+        <li><span class="uq">UQ</span> <span class="col">razorpay_order_id · payment_id · refund_id</span></li>
+        <li><span class="col">payments_pending_reverify_idx (partial)</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl pink">
+      <div class="hdr"><span class="nm">invoices</span><span class="pk">0011</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="fk">UQ FK</span> <span class="col">booking_id</span> (1:1)</li>
+        <li><span class="uq">UQ</span> <span class="col">invoice_number</span> <span class="typ">trigger INV-YYYYMM-NNNNNN</span></li>
+        <li><span class="col">subtotal · tax · total · paid_amount · balance_amount</span></li>
+        <li><span class="col">gstin · pdf_url · generated_at · sent_to_patient_at</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl cyan">
+      <div class="hdr"><span class="nm">reports</span><span class="pk">0012 + 0023</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="fk">FK</span> <span class="col">booking_id</span> → bookings</li>
+        <li><span class="fk">FK</span> <span class="col">patient_user_id</span> → users (NULLABLE since 0023)</li>
+        <li><span class="col">file_name · file_url · file_size_bytes · file_mime</span></li>
+        <li><span class="col">report_type · version (MAX+1) · is_active · uploaded_by</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl">
+      <div class="hdr"><span class="nm">reviews</span><span class="pk">0013</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="fk">FK</span> <span class="col">patient_user_id · doctor_user_id (nullable)</span></li>
+        <li><span class="col">rating · text · status (pending|approved|rejected|hidden)</span></li>
+        <li><span class="col">clinic_reply · replied_at · replied_by · rejection_reason</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl">
+      <div class="hdr"><span class="nm">enquiries</span><span class="pk">0014</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="col">name · email · phone · subject · message</span></li>
+        <li><span class="col">status (new|read|replied|closed) · responded_at · responded_by</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl">
+      <div class="hdr"><span class="nm">webhook_events</span><span class="pk">0015</span></div>
+      <ul>
+        <li><span class="uq">UQ</span> <span class="col">event_id</span></li>
+        <li><span class="col">event_type · razorpay_* · payload JSONB</span></li>
+        <li><span class="col">signature_valid · processed · processed_at · processing_error</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl red">
+      <div class="hdr"><span class="nm">audit_log</span><span class="pk">0016</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="col">actor_user_id · actor_role · action</span></li>
+        <li><span class="col">entity_type · entity_id · before_data · after_data</span></li>
+        <li><span class="col">ip_address · user_agent</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl">
+      <div class="hdr"><span class="nm">clinic_settings</span><span class="pk">0017</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">key</span></li>
+        <li><span class="col">value JSONB</span></li>
+        <li><span class="col">seeded: clinic_name · upi_id · gstin · business_hours · refund_policy …</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl">
+      <div class="hdr"><span class="nm">serviceable_pincodes</span><span class="pk">0018</span></div>
+      <ul>
+        <li><span class="uq">UQ</span> <span class="col">pincode</span></li>
+        <li><span class="col">city · state · zone · home_visit_charge · collection_lead_time_hours · is_active</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl pink">
+      <div class="hdr"><span class="nm">notifications</span><span class="pk">0026</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">id</span></li>
+        <li><span class="fk">FK</span> <span class="col">user_id</span> → users (NULL = broadcast)</li>
+        <li><span class="col">audience (admin|patient|collector) · title · body · link · event</span></li>
+        <li><span class="col">booking_id · booking_code · read_at · created_at</span></li>
+        <li><span class="col">notifications_user_unread_idx (partial)</span></li>
+      </ul>
+    </div>
+
+    <div class="tbl pink">
+      <div class="hdr"><span class="nm">notification_reads</span><span class="pk">0026</span></div>
+      <ul>
+        <li><span class="pkm">PK</span> <span class="col">(notification_id, user_id)</span></li>
+        <li><span class="col">read_at — per-user dismissal of a broadcast</span></li>
+      </ul>
+    </div>
+
+  </div>
+
+  <div class="panel">
+    <h3 class="violet">Key triggers &amp; constraints</h3>
+    <ul>
+      <li><strong>generate_booking_code()</strong> — BEFORE INSERT on bookings; uses <code>seq_booking_code_doc</code> / <code>seq_booking_code_test</code>; month in Asia/Kolkata.</li>
+      <li><strong>generate_invoice_number()</strong> — BEFORE INSERT on invoices; uses <code>seq_invoice_number</code>; month in Asia/Kolkata.</li>
+      <li><strong>set_updated_at()</strong> — reused on every table with an <code>updated_at</code> column.</li>
+      <li><strong>uq_active_slot</strong> — partial UNIQUE index that prevents double-booking while a slot is active.</li>
+      <li><strong>services_package_consistency_chk</strong> — if <code>is_package</code> then <code>package_service_ids</code> must be a JSON array.</li>
+      <li><strong>users_login_capability_chk</strong> — can't enable login without a way to authenticate.</li>
+      <li><strong>payments_source_consistency_chk</strong> — UPI manual rows need proof bytes; offline rows need <code>collected_by_user_id</code>; Razorpay rows need <code>razorpay_order_id</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ======================== 11 CROSS-CUTTING ======================== -->
+<section id="cross" class="zone pink">
+  <div class="banner">
+    <h2>11 · Cross-cutting concerns (every request)</h2>
+    <p>Invisible plumbing that protects every endpoint.</p>
+  </div>
+
+  <div class="grid-3">
+    <div class="panel"><h3 class="pink">Middleware chain</h3><p>helmet → cors → json(1mb) → urlencoded → pinoHttp → generalLimiter(200/min) → static /uploads → auditLogMiddleware → router → notFoundHandler → errorHandler</p></div>
+    <div class="panel"><h3 class="pink">Error translation</h3><p>ZodError→400 · MulterError→413/400 · pg <code>23505</code>→409 · <code>23503/02/14</code>→400 · <code>42703/42P01</code>→500 with "<code>pnpm db:migrate</code>" hint.</p></div>
+    <div class="panel"><h3 class="pink">Transaction boundary</h3><p>Every multi-table booking write uses <code>transaction(fn)</code> in <code>db/pool.ts</code> — BEGIN / COMMIT / ROLLBACK, client released in finally.</p></div>
+    <div class="panel"><h3 class="pink">Cache invalidation rule</h3><p>Mutations invalidate every affected key. <code>useCreateServiceCategory</code> invalidates 3 keys: admin list · public list · related dropdowns.</p></div>
+    <div class="panel"><h3 class="pink">booking_code is canonical</h3><p>One human-readable ID ties patient → booking → items → payments → invoice → reports. Admin always types the code.</p></div>
+    <div class="panel"><h3 class="pink">Storage adapter</h3><p>LocalStorageAdapter writes to <code>STORAGE_LOCAL_PATH</code>, signs via <code>getSignedUrl(key, 900s)</code>. S3 driver falls back to local with a warn.</p></div>
+    <div class="panel"><h3 class="pink">Rate limits</h3><p>Global 200/min/IP via generalLimiter. PublicWriteLimiter 5/min on POST /enquiries and POST /reviews.</p></div>
+    <div class="panel"><h3 class="pink">JWT freshness</h3><p>requireAuth re-SELECTs the users row every request — role changes / disabled accounts take effect immediately.</p></div>
+    <div class="panel"><h3 class="pink">Mock-mode flag</h3><p>VITE_USE_MOCK_DATA !== 'false' short-circuits Phase-1 read hooks to in-memory fixtures via <code>mockOrFetch()</code>.</p></div>
+    <div class="panel"><h3 class="pink">Asia/Kolkata everywhere</h3><p>Booking codes, invoice numbers, dashboard today/yesterday, PDF dates — all derived in Asia/Kolkata, never UTC.</p></div>
+    <div class="panel"><h3 class="pink">Phase-2 gate</h3><p>VITE_PHASE_2_ENABLED gates the entire patient + admin surface so the Phase-1 marketing site can ship alone.</p></div>
+    <div class="panel"><h3 class="pink">Pino redactions</h3><p>Authorization headers, <code>password*</code>, <code>token</code> fields are scrubbed before any line is written.</p></div>
+  </div>
+</section>
+
+<!-- ======================== 12 ENV ======================== -->
+<section id="env" class="zone">
+  <div class="banner">
+    <h2>12 · Environment variables — full reference</h2>
+    <p>Backend env is zod-validated in <code>config/env.ts</code> and the server refuses to start if anything is missing.</p>
+  </div>
+
+  <div class="panel">
+    <h3>Backend (<code>backend/.env</code>)</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Required</th><th>Default</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>DATABASE_URL</code></td><td>yes</td><td>—</td><td>postgres://user:pass@host:5432/db</td></tr>
+        <tr><td><code>JWT_SECRET</code></td><td>yes (≥16 ch)</td><td>—</td><td>signing key for all JWTs</td></tr>
+        <tr><td><code>PORT</code></td><td>no</td><td>3001</td><td>API listen port</td></tr>
+        <tr><td><code>NODE_ENV</code></td><td>no</td><td>development</td><td>controls OTP debug echo + pretty logs</td></tr>
+        <tr><td><code>TZ</code></td><td>no</td><td>Asia/Kolkata</td><td>process timezone (codes/numbers depend on this)</td></tr>
+        <tr><td><code>CORS_ORIGIN</code></td><td>no</td><td>*</td><td>comma-split origins, sent with credentials</td></tr>
+        <tr><td><code>DATABASE_SSL</code></td><td>no</td><td>false</td><td>toggle SSL for managed Postgres</td></tr>
+        <tr><td><code>JWT_EXPIRES_IN</code></td><td>no</td><td>7d</td><td>passed verbatim to jsonwebtoken</td></tr>
+        <tr><td><code>BCRYPT_ROUNDS</code></td><td>no</td><td>10</td><td>clamped 8–14</td></tr>
+        <tr><td><code>OTP_EXPIRY_MINUTES</code></td><td>no</td><td>10</td><td>TTL in otpStore Map</td></tr>
+        <tr><td><code>OTP_MAX_ATTEMPTS</code></td><td>no</td><td>5</td><td>max verify attempts per code</td></tr>
+        <tr><td><code>STORAGE_DRIVER</code></td><td>no</td><td>local</td><td>local | s3 (s3 falls back to local with warn)</td></tr>
+        <tr><td><code>STORAGE_LOCAL_PATH</code></td><td>no</td><td>./uploads</td><td>where multer writes</td></tr>
+        <tr><td><code>STORAGE_PUBLIC_BASE_URL</code></td><td>no</td><td>http://localhost:3001/uploads</td><td>prefix returned in signed URLs</td></tr>
+        <tr><td><code>RAZORPAY_KEY_ID / SECRET / WEBHOOK_SECRET</code></td><td>no</td><td>—</td><td>future integration</td></tr>
+        <tr><td><code>RESEND_API_KEY · EMAIL_FROM</code></td><td>no</td><td>—</td><td>email send</td></tr>
+        <tr><td><code>MSG91_*</code> (5 keys)</td><td>no</td><td>—</td><td>SMS / OTP gateway</td></tr>
+        <tr><td><code>SENTRY_DSN</code></td><td>no</td><td>—</td><td>error reporting</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h3 class="cyan">Frontend (<code>frontend/.env</code>)</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Default</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>VITE_API_URL</code></td><td>/api/v1</td><td>full URL of the backend (use proxy in dev or absolute in prod)</td></tr>
+        <tr><td><code>VITE_PHASE_2_ENABLED</code></td><td>—</td><td>'true' to enable patient + admin surface</td></tr>
+        <tr><td><code>VITE_USE_MOCK_DATA</code></td><td>—</td><td>'false' to hit live backend; any other value short-circuits Phase-1 reads to mocks</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ======================== 13 TREE ======================== -->
+<section id="tree" class="zone amber">
+  <div class="banner">
+    <h2>13 · Repo tree (the map you need to navigate the code)</h2>
+    <p>Only the files you'll touch — same names as in the codebase.</p>
+  </div>
+
+<pre>
+arogya/
+├─ <span class="c1">frontend/</span>
+│  ├─ src/
+│  │  ├─ main.tsx · App.tsx
+│  │  ├─ config/featureFlags.ts        <span class="c4"># PHASE_2_ENABLED · clinic constants</span>
+│  │  ├─ layouts/
+│  │  │  ├─ PublicLayout.tsx · DashboardLayout.tsx · AdminLayout.tsx
+│  │  ├─ pages/
+│  │  │  ├─ public/      <span class="c4"># Home · Services · Doctors · Departments · Contact · Feedback …</span>
+│  │  │  ├─ patient/     <span class="c4"># Login · Signup · BookDoctor · BookTest · Dashboard* · BookingDetail …</span>
+│  │  │  └─ admin/       <span class="c4"># Dashboard · Bookings · WalkInBill · HomeCollectionBoard · Doctors · Reports · Invoices · Analytics · AuditLog · PaymentVerifications · Collectors · Settings …</span>
+│  │  ├─ components/
+│  │  │  ├─ shared/      <span class="c4"># Header · Footer · NotificationBell · RequireAuth · BookingStatusBadge · DoctorAvatar</span>
+│  │  │  ├─ ui/          <span class="c4"># Radix wrappers — button, card, input, badge …</span>
+│  │  │  ├─ booking/     <span class="c4"># DateStrip · SlotGrid · WizardSteps</span>
+│  │  │  ├─ admin/       <span class="c4"># DataTable · BookingStatusSelect · WeeklyScheduleEditor · ReVerifyPaymentModal</span>
+│  │  │  └─ payment/     <span class="c4"># UpiPaymentModal · ProofPreview</span>
+│  │  ├─ hooks/queries.ts             <span class="c4"># ~500 lines — every TanStack hook</span>
+│  │  ├─ stores/         <span class="c4"># authStore · cartStore (zustand, persisted)</span>
+│  │  └─ lib/            <span class="c4"># apiClient · authToken · utils · mockData · mockPhase2</span>
+│  └─ index.html · vite.config.ts · tailwind.config.ts · tsconfig.json
+│
+├─ <span class="c3">backend/</span>
+│  ├─ src/
+│  │  ├─ server.ts                    <span class="c4"># app wiring · listen</span>
+│  │  ├─ config/env.ts                <span class="c4"># zod-validated env</span>
+│  │  ├─ db/pool.ts                   <span class="c4"># pg.Pool · query() · transaction()</span>
+│  │  ├─ lib/
+│  │  │  ├─ jwt.ts · passwords.ts · otpStore.ts
+│  │  │  ├─ logger.ts · storage.ts · notify.ts
+│  │  ├─ middleware/
+│  │  │  ├─ auth.ts · rateLimit.ts · errorHandler.ts · auditLog.ts
+│  │  └─ modules/
+│  │     ├─ auth/authRoutes.ts
+│  │     ├─ public/publicRoutes.ts
+│  │     ├─ phase2/phase2Routes.ts    <span class="c4"># the big one — bookings · slots · payments · admin</span>
+│  │     ├─ uploads/uploadRoutes.ts
+│  │     └─ invoices/invoiceRoutes.ts
+│  └─ tsconfig.json · package.json
+│
+├─ <span class="c2">shared/</span>
+│  └─ src/
+│     ├─ enums.ts · types.ts
+│     └─ schemas/  <span class="c4"># address · booking · enquiry · review</span>
+│
+├─ <span class="c2">supabase/</span>
+│  ├─ migrations/  <span class="c4"># 0001..0026 — apply in order via pnpm db:migrate</span>
+│  └─ seed/        <span class="c4"># clinic_settings · departments · categories · services · super_admin</span>
+│
+├─ <span class="c2">Docs/</span>  <span class="c4"># this file lives here</span>
+├─ package.json  <span class="c4"># pnpm + turbo workspace root</span>
+└─ pnpm-workspace.yaml
+</pre>
+</section>
+
+<!-- ======================== 14 ROADMAP ======================== -->
+<section id="roadmap" class="zone red">
+  <div class="banner">
+    <h2>14 · Roadmap &amp; open TODOs</h2>
+    <p>What's next, in priority order. Each item is observable in the code as a comment, stub, or fallback.</p>
+  </div>
+
+  <table>
+    <thead><tr><th>#</th><th>Item</th><th>Where it lives in code</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>MSG91 SMS for OTP</td><td><code>authRoutes /auth/otp/send</code> · MSG91 TODO comment</td><td>Currently logs <code>debug_code</code> in non-prod — production OTP needs the gateway.</td></tr>
+      <tr><td>2</td><td>Razorpay live checkout + webhook HMAC</td><td><code>POST /payments/create-order</code> + <code>/webhooks/razorpay</code></td><td>Stubs preserved; activate when merchant account is provisioned.</td></tr>
+      <tr><td>3</td><td>Slot-lock expiry cron</td><td>Note in <code>0008_bookings.sql</code></td><td>Stale drafts holding a slot need automatic transition to <code>cancelled</code>.</td></tr>
+      <tr><td>4</td><td>S3 storage driver</td><td><code>lib/storage.ts</code> — currently falls back to local with warn</td><td>For deployments without persistent disk.</td></tr>
+      <tr><td>5</td><td>Real home-collection slot generator</td><td><code>GET /home-collection/slots</code></td><td>Currently hardcoded 8 slots — should respect collector availability + pincode lead time.</td></tr>
+      <tr><td>6</td><td>JWT revocation list</td><td>Currently no blacklist on logout</td><td>Stateless tokens are convenient but block immediate revoke.</td></tr>
+      <tr><td>7</td><td>OTP store Redis backend</td><td><code>lib/otpStore.ts</code></td><td>In-memory Map breaks under horizontal scaling.</td></tr>
+      <tr><td>8</td><td>Admin UI for doctor_unavailability</td><td>DB table exists; no admin page yet</td><td>Today the only way to block leaves is direct SQL.</td></tr>
+      <tr><td>9</td><td>Doctor portal</td><td>Doctors are seeded with <code>is_login_enabled=FALSE</code></td><td>Doctors could view their own day-sheet + uploads.</td></tr>
+      <tr><td>10</td><td>Backfill walk-in reports on patient signup</td><td>Hint in <code>booking_code_is_the_canonical_id</code> memory</td><td>Match <code>patient_snapshot.mobile</code> with new <code>users.mobile</code> and update FKs.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</main>
+
+<footer>
+  Arogya Diagnostics &nbsp;·&nbsp; <span>system architecture &amp; workflow guide</span> &nbsp;·&nbsp; generated 2026-05-14 &nbsp;·&nbsp; one file → run · understand · operate
+</footer>
+
+</div>
+</body>
+</html>

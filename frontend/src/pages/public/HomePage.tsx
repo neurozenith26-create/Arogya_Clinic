@@ -19,6 +19,7 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Logo } from '../../components/shared/Logo';
+import { MedicalBackdrop } from '../../components/shared/MedicalBackdrop';
 import {
   CLINIC_FULL_NAME,
   CLINIC_PHONE,
@@ -45,27 +46,43 @@ const stats = [
   { value: '24h', label: 'Report TAT' },
 ];
 
+// Local media — served from /public/media; MP4s aren't bundled by Vite so
+// they don't bloat the JS payload. Every <video> is paired with a poster
+// image so the LCP element paints instantly while the clip streams in.
+const MEDIA = {
+  heroVideo: '/media/217018_medium.mp4',
+  heroPoster: '/media/excellentcc-covid-19-5169689_1920.jpg',
+  labVideo: '/media/262187_medium.mp4',
+  storyVideo: '/media/197486-905015022_medium.mp4',
+  banner: '/media/excellentcc-covid-19-5169689_1920.jpg',
+} as const;
+
 const labImages = [
-  // Unsplash lab/medical photography — free CDN-hosted, served with format hints
+  // First tile uses the local clinic banner so above-the-fold weight stays
+  // low; the rest are CDN-served Unsplash thumbnails (~50 KB each).
   {
-    url: 'https://images.unsplash.com/photo-1579154204601-01588f351e67?w=800&auto=format&fit=crop&q=70',
-    alt: 'Modern pathology lab',
-    caption: 'Modern pathology',
+    url: MEDIA.banner,
+    alt: 'Arogya pathology lab',
+    caption: 'Our clinic',
+    local: true,
   },
   {
     url: 'https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=800&auto=format&fit=crop&q=70',
     alt: 'Doctor consultation',
     caption: 'Expert consultations',
+    local: false,
   },
   {
     url: 'https://images.unsplash.com/photo-1579165466741-7f35e4755660?w=800&auto=format&fit=crop&q=70',
     alt: 'Diagnostic imaging',
     caption: 'Digital diagnostics',
+    local: false,
   },
   {
     url: 'https://images.unsplash.com/photo-1666214280391-8ff5bd3c0bf0?w=800&auto=format&fit=crop&q=70',
     alt: 'Home sample collection',
     caption: 'Home collection',
+    local: false,
   },
 ];
 
@@ -79,27 +96,26 @@ export default function HomePage() {
         <meta name="description" content={CLINIC_TAGLINE_EN} />
       </Helmet>
 
-      {/* ── Hero with video background ──────────────────────────────────── */}
+      {/* ── Hero with video background + medical decoration ─────────────── */}
       <section className="relative overflow-hidden bg-gradient-hero text-white">
-        {/* Background video — graceful fallback to gradient */}
+        {/* Local background video (~3.4 MB) with preload="metadata" so only
+            headers load up-front; the poster image paints first as LCP. */}
         <video
           className="absolute inset-0 h-full w-full object-cover opacity-30 mix-blend-overlay"
           autoPlay
           muted
           loop
           playsInline
-          poster="https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?w=1600&auto=format&fit=crop&q=70"
+          preload="metadata"
+          poster={MEDIA.heroPoster}
           aria-hidden="true"
         >
-          <source
-            src="https://cdn.coverr.co/videos/coverr-medical-laboratory-test-tubes-3478/1080p.mp4"
-            type="video/mp4"
-          />
+          <source src={MEDIA.heroVideo} type="video/mp4" />
         </video>
 
-        {/* Floating decorative shapes */}
-        <div className="pointer-events-none absolute -left-20 top-20 h-72 w-72 rounded-full bg-secondary/20 blur-3xl animate-float-slow" />
-        <div className="pointer-events-none absolute -right-20 bottom-10 h-80 w-80 rounded-full bg-primary/30 blur-3xl animate-float-slow delay-300" />
+        {/* Medical decoration layer — DNA helix + molecule + EKG line. Pure
+            inline SVG with reduced-motion-safe animations, no extra fetch. */}
+        <MedicalBackdrop tone="dark" />
 
         <div className="container relative z-10 grid gap-10 py-16 md:py-24 lg:grid-cols-2 lg:items-center">
           <div className="animate-fade-up">
@@ -174,9 +190,14 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Hero card — echoes the clinic business card with new brand palette */}
+          {/* Hero card — frosted-glass with a subtle live "available now" dot */}
           <div className="animate-scale-in delay-200 lg:justify-self-end">
-            <div className="mx-auto max-w-md rounded-2xl border-2 border-white/30 bg-white/95 p-6 text-foreground shadow-2xl backdrop-blur">
+            <div className="glass-card relative mx-auto max-w-md rounded-2xl p-6 text-foreground shadow-2xl">
+              {/* Live availability dot with pulse-ring */}
+              <div className="absolute right-4 top-4 flex h-3 w-3 items-center justify-center">
+                <span className="absolute inline-flex h-full w-full animate-pulse-ring rounded-full bg-secondary" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-secondary" />
+              </div>
               <div className="flex items-start gap-3">
                 <Logo size={56} />
                 <div>
@@ -195,7 +216,7 @@ export default function HomePage() {
                 {CLINIC_TAGLINE_BN}
               </p>
               <div className="mt-4 flex items-center justify-center gap-2">
-                <Phone className="h-5 w-5 text-secondary" />
+                <Phone className="h-5 w-5 text-secondary animate-heartbeat" />
                 <a
                   href={`tel:${CLINIC_PHONE_DIGITS}`}
                   className="text-lg font-bold text-primary hover:text-primary/80"
@@ -299,17 +320,37 @@ export default function HomePage() {
             </div>
 
             <div className="grid grid-cols-2 gap-3 sm:gap-4">
-              {labImages.map((img, i) => (
+              {/* First tile = local lab video, autoplay muted loop. The
+                  poster paints first; the MP4 streams in as metadata is
+                  resolved. Eye-catching real clinic footage instead of
+                  stock. */}
+              <div className="hover-lift group relative col-span-2 aspect-[16/10] overflow-hidden rounded-xl bg-card shadow-md animate-fade-up delay-100">
+                <video
+                  className="h-full w-full object-cover"
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  poster={MEDIA.banner}
+                  aria-label="Inside the Arogya pathology lab"
+                >
+                  <source src={MEDIA.labVideo} type="video/mp4" />
+                </video>
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-3">
+                  <p className="text-xs font-medium text-white">Inside our lab</p>
+                </div>
+              </div>
+              {labImages.slice(1).map((img, i) => (
                 <div
                   key={img.url}
-                  className={`group relative overflow-hidden rounded-xl bg-card shadow-md animate-fade-up delay-${(i + 1) * 100} ${
-                    i === 0 ? 'col-span-2 aspect-[16/10]' : 'aspect-square'
-                  }`}
+                  className={`hover-lift group relative aspect-square overflow-hidden rounded-xl bg-card shadow-md animate-fade-up delay-${(i + 2) * 100}`}
                 >
                   <img
                     src={img.url}
                     alt={img.alt}
                     loading="lazy"
+                    decoding="async"
                     className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                   />
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-3">

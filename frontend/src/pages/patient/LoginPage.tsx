@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { Mail, Phone, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Mail, Phone, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Logo } from '../../components/shared/Logo';
+import { MedicalBackdrop } from '../../components/shared/MedicalBackdrop';
 import { useAuthStore, DEMO_CREDENTIALS } from '../../stores/authStore';
 import { CLINIC_FULL_NAME } from '../../config/featureFlags';
 
@@ -102,8 +103,12 @@ export default function LoginPage() {
       <Helmet>
         <title>Sign in — {CLINIC_FULL_NAME}</title>
       </Helmet>
-      <div className="container flex min-h-[80vh] items-center justify-center py-8">
-        <Card className="w-full max-w-md animate-fade-up">
+      <div className="relative flex min-h-[80vh] items-center justify-center overflow-hidden py-8">
+        {/* Soft brand-tinted backdrop — patient login uses the light tone so
+            text stays readable while still feeling modern. */}
+        <MedicalBackdrop tone="light" minimal />
+        <div className="absolute inset-0 -z-10 bg-gradient-to-br from-accent/40 via-background to-background" />
+        <Card className="relative z-10 w-full max-w-md animate-fade-up shadow-2xl">
           <CardHeader className="space-y-2 text-center">
             <Logo size={48} className="mx-auto" />
             <CardTitle className="text-2xl">Welcome back</CardTitle>
@@ -256,11 +261,22 @@ export default function LoginPage() {
               </form>
             )}
 
-            <div className="mt-6 border-t pt-4 text-center text-sm text-muted-foreground">
-              New patient?{' '}
-              <Link to="/auth/signup" className="font-medium text-primary hover:underline">
-                Create an account
-              </Link>
+            <div className="mt-6 space-y-2 border-t pt-4 text-center text-sm text-muted-foreground">
+              <div>
+                New patient?{' '}
+                <Link to="/auth/signup" className="font-medium text-primary hover:underline">
+                  Create an account
+                </Link>
+              </div>
+              <div>
+                <Link
+                  to="/"
+                  className="inline-flex items-center gap-1 text-xs hover:text-foreground"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Back to home page
+                </Link>
+              </div>
             </div>
           </CardContent>
         </Card>

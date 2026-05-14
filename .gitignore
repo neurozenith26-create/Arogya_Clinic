@@ -29,6 +29,9 @@ pnpm-debug.log*
 Thumbs.db
 *.swp
 
+# MS Office lock files (created while a doc is open)
+~$*
+
 # Test coverage
 coverage/
 .nyc_output/

@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { ShieldCheck, AlertCircle } from 'lucide-react';
+import { ShieldCheck, AlertCircle, ArrowLeft, User } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Logo } from '../../components/shared/Logo';
+import { MedicalBackdrop } from '../../components/shared/MedicalBackdrop';
 import { useAuthStore, DEMO_CREDENTIALS } from '../../stores/authStore';
 
 export default function AdminLoginPage() {
@@ -50,8 +51,9 @@ export default function AdminLoginPage() {
       <Helmet>
         <title>Admin Sign in — Arogya</title>
       </Helmet>
-      <div className="bg-gradient-hero flex min-h-screen items-center justify-center px-4 py-12">
-        <Card className="w-full max-w-md animate-fade-up shadow-2xl">
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-hero px-4 py-12">
+        <MedicalBackdrop tone="dark" />
+        <Card className="relative z-10 w-full max-w-md animate-fade-up shadow-2xl">
           <CardHeader className="space-y-2 text-center">
             <Logo size={48} className="mx-auto" />
             <CardTitle className="text-2xl">Admin Sign in</CardTitle>
@@ -110,6 +112,25 @@ export default function AdminLoginPage() {
                 {loading ? 'Signing in...' : 'Sign in'}
               </Button>
             </form>
+
+            <div className="mt-6 space-y-2 border-t pt-4 text-center text-xs">
+              <Link
+                to="/auth/login"
+                className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+              >
+                <User className="h-3.5 w-3.5" />
+                Are you a patient? Sign in here
+              </Link>
+              <div>
+                <Link
+                  to="/"
+                  className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Back to home page
+                </Link>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
