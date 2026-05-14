@@ -174,14 +174,32 @@ export function Header() {
           )}
         </nav>
 
-        <button
-          type="button"
-          className="lg:hidden"
-          onClick={() => setMobileOpen((v) => !v)}
-          aria-label="Toggle menu"
-        >
-          {mobileOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
-        </button>
+        <div className="flex items-center gap-1 lg:hidden">
+          {/* Mobile-only quick sign-out — visible without opening the menu
+              drawer so logged-in users never have to scroll a long list to
+              get out. Sized for thumb-tap (44 px target). */}
+          {user && (
+            <button
+              type="button"
+              onClick={() => {
+                logout();
+                navigate('/');
+              }}
+              aria-label="Sign out"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-md text-destructive hover:bg-destructive/10"
+            >
+              <LogOut className="h-5 w-5" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setMobileOpen((v) => !v)}
+            aria-label="Toggle menu"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-md hover:bg-accent"
+          >
+            {mobileOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+          </button>
+        </div>
       </div>
 
       {mobileOpen && (
@@ -226,13 +244,30 @@ export function Header() {
                   Cart {cartCount > 0 && `(${cartCount})`}
                 </Link>
                 {user ? (
-                  <Link
-                    to="/dashboard"
-                    onClick={() => setMobileOpen(false)}
-                    className="rounded-md px-3 py-2 text-sm font-medium hover:bg-accent"
-                  >
-                    My Dashboard
-                  </Link>
+                  <>
+                    <Link
+                      to="/dashboard"
+                      onClick={() => setMobileOpen(false)}
+                      className="rounded-md px-3 py-2 text-sm font-medium hover:bg-accent"
+                    >
+                      My Dashboard
+                    </Link>
+                    {/* Mobile Sign out — kept right next to Dashboard
+                        (not buried at the very bottom) so it's a single
+                        thumb-tap away no matter how tall the drawer gets. */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        logout();
+                        setMobileOpen(false);
+                        navigate('/');
+                      }}
+                      className="mt-1 inline-flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm font-medium text-destructive hover:bg-destructive/10"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Sign out
+                    </button>
+                  </>
                 ) : (
                   <Link
                     to="/auth/login"

@@ -149,3 +149,122 @@
     }
   }
 }
+
+/* ── Modern UI flourishes — medical-themed motion, glass, gradients ──── */
+@layer utilities {
+  /* DNA helix slow rotation for decorative SVG */
+  @keyframes dna-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  /* Heartbeat — a sharp double-thump like an EKG */
+  @keyframes heartbeat {
+    0%, 100% { transform: scale(1); }
+    14%      { transform: scale(1.08); }
+    28%      { transform: scale(1); }
+    42%      { transform: scale(1.05); }
+    70%      { transform: scale(1); }
+  }
+  /* Pulse-ring — concentric circles fading outward, used on CTAs / status dots */
+  @keyframes pulse-ring {
+    0%   { transform: scale(0.9); opacity: 0.55; }
+    80%  { transform: scale(1.6); opacity: 0; }
+    100% { transform: scale(1.6); opacity: 0; }
+  }
+  /* Aurora — slowly drifting blobs, layered behind heroes */
+  @keyframes aurora {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33%      { transform: translate(30px, -20px) scale(1.06); }
+    66%      { transform: translate(-20px, 25px) scale(0.96); }
+  }
+  /* Gradient-shift — sweeping hue movement on borders / text */
+  @keyframes gradient-shift {
+    0%, 100% { background-position: 0% 50%; }
+    50%      { background-position: 100% 50%; }
+  }
+  /* Marquee for tiny ticker rows (e.g. clinic highlights). */
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+  }
+  /* EKG line drawing — animates stroke-dashoffset */
+  @keyframes ekg-draw {
+    from { stroke-dashoffset: 600; }
+    to   { stroke-dashoffset: 0; }
+  }
+
+  .animate-dna-spin    { animation: dna-spin 18s linear infinite; }
+  .animate-heartbeat   { animation: heartbeat 1.6s ease-in-out infinite; }
+  .animate-pulse-ring  { animation: pulse-ring 2.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite; }
+  .animate-aurora      { animation: aurora 14s ease-in-out infinite; }
+  .animate-gradient    {
+    background-size: 200% 200%;
+    animation: gradient-shift 8s ease infinite;
+  }
+  .animate-marquee     { animation: marquee 30s linear infinite; }
+  .animate-ekg         {
+    stroke-dasharray: 600;
+    stroke-dashoffset: 600;
+    animation: ekg-draw 3s ease-out forwards;
+  }
+
+  /* Glass card — frosted-glass effect for hero overlays. */
+  .glass-card {
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+  }
+  .glass-card-dark {
+    background: rgba(10, 37, 64, 0.55);
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+  }
+
+  /* Hover-lift — subtle elevation on hover. Used on cards. */
+  .hover-lift {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .hover-lift:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 28px -16px rgba(0, 102, 217, 0.35);
+  }
+
+  /* Gradient border — uses the mask trick to draw a 1.5 px brand-gradient
+     border on top of the underlying surface. */
+  .gradient-border {
+    position: relative;
+    background-clip: padding-box;
+    border: 1.5px solid transparent;
+  }
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    margin: -1.5px;
+    border-radius: inherit;
+    background: var(--gradient-primary);
+  }
+
+  /* Subtle medical-cross + dot pattern — drop into section backgrounds. */
+  .pattern-medical {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(0, 102, 217, 0.08) 1px, transparent 0);
+    background-size: 24px 24px;
+  }
+
+  /* Respect reduced motion for the new animations too. */
+  @media (prefers-reduced-motion: reduce) {
+    .animate-dna-spin,
+    .animate-heartbeat,
+    .animate-pulse-ring,
+    .animate-aurora,
+    .animate-gradient,
+    .animate-marquee,
+    .animate-ekg {
+      animation: none;
+    }
+  }
+}

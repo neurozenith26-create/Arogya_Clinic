@@ -56,8 +56,17 @@ export default function ServicesPage() {
         />
       </Helmet>
 
-      <section className="bg-gradient-to-b from-accent/40 to-background">
-        <div className="container py-12 md:py-16">
+      <section className="relative overflow-hidden">
+        {/* Local banner image (~283 KB) — soft overlay so text stays
+            readable; decoded async to avoid blocking the LCP. */}
+        <img
+          src="/media/excellentcc-covid-19-5169689_1920.jpg"
+          alt=""
+          decoding="async"
+          className="absolute inset-0 h-full w-full object-cover opacity-25"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-accent/60 to-background" />
+        <div className="container relative z-10 py-12 md:py-16">
           {homeVisitMode && (
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-orange-300 bg-orange-50 p-4 text-sm text-orange-900">
               <div className="inline-flex items-center gap-2">

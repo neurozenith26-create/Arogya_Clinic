@@ -7,6 +7,7 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Logo } from '../../components/shared/Logo';
+import { MedicalBackdrop } from '../../components/shared/MedicalBackdrop';
 import { useAuthStore, DEMO_CREDENTIALS } from '../../stores/authStore';
 
 export default function AdminLoginPage() {
@@ -50,8 +51,9 @@ export default function AdminLoginPage() {
       <Helmet>
         <title>Admin Sign in — Arogya</title>
       </Helmet>
-      <div className="bg-gradient-hero flex min-h-screen items-center justify-center px-4 py-12">
-        <Card className="w-full max-w-md animate-fade-up shadow-2xl">
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-hero px-4 py-12">
+        <MedicalBackdrop tone="dark" />
+        <Card className="relative z-10 w-full max-w-md animate-fade-up shadow-2xl">
           <CardHeader className="space-y-2 text-center">
             <Logo size={48} className="mx-auto" />
             <CardTitle className="text-2xl">Admin Sign in</CardTitle>
