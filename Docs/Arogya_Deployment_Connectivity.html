@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Arogya Diagnostics — Deployment &amp; Connectivity Reference</title>
+<style>
+  :root {
+    --bg: #0a0e14;
+    --bg-2: #0f141b;
+    --panel: rgba(15, 20, 27, 0.7);
+    --panel-2: rgba(20, 27, 36, 0.85);
+    --ink: #d8e3ee;
+    --muted: #8a99ad;
+    --dim: #5c6a7e;
+    --lime: #c8f55a;
+    --cyan: #6ee7ff;
+    --violet: #b894ff;
+    --amber: #ffc36b;
+    --pink:  #ff7da3;
+    --red:   #ff5c7a;
+    --green: #6ee7a8;
+    --border: rgba(150, 170, 200, 0.12);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 10% -10%, #0d2030 0%, transparent 60%),
+      radial-gradient(1000px 500px at 110% 10%, #1a0d22 0%, transparent 55%),
+      linear-gradient(180deg, var(--bg), var(--bg-2));
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+    background-attachment: fixed;
+    scroll-behavior: smooth;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .wrap { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 36px 28px 80px; }
+  h1 { color: var(--lime); font-size: 22px; margin: 0 0 4px; letter-spacing: 0.5px; }
+  h2 { color: var(--cyan); font-size: 16px; margin: 36px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { color: var(--violet); font-size: 13px; margin: 18px 0 8px; }
+  .subtitle { color: var(--muted); margin: 0 0 24px; font-size: 12px; }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, kbd { font-family: inherit; color: var(--green); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin: 12px 0;
+    backdrop-filter: blur(6px);
+  }
+  .panel-2 { background: var(--panel-2); }
+  .row { display: grid; grid-template-columns: 200px 1fr; gap: 6px 16px; }
+  .row .k { color: var(--muted); }
+  .row .v { color: var(--ink); word-break: break-all; }
+  .row .v.secret { color: var(--red); }
+  .row .v.public { color: var(--green); }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--amber); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { font-size: 12px; }
+  td.k { color: var(--cyan); white-space: nowrap; }
+  td.purpose { color: var(--muted); }
+  pre {
+    background: #050810;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-size: 12px;
+    color: var(--ink);
+  }
+  pre .cm { color: var(--dim); }
+  pre .v { color: var(--green); }
+  pre .k { color: var(--cyan); }
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    margin-left: 6px;
+    text-transform: uppercase;
+  }
+  .tag-public { background: rgba(110, 231, 168, 0.15); color: var(--green); }
+  .tag-secret { background: rgba(255, 92, 122, 0.15); color: var(--red); }
+  .tag-public-url { background: rgba(110, 231, 255, 0.15); color: var(--cyan); }
+  .tag-prod { background: rgba(255, 195, 107, 0.15); color: var(--amber); }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } .row { grid-template-columns: 1fr; } }
+  .legend { color: var(--muted); font-size: 11px; margin-top: 8px; }
+  .diagram {
+    background: #050810;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--ink);
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 16px 0;
+  }
+  .diagram .box-lime { color: var(--lime); }
+  .diagram .box-cyan { color: var(--cyan); }
+  .diagram .box-violet { color: var(--violet); }
+  .diagram .box-amber { color: var(--amber); }
+  .diagram .arrow { color: var(--muted); }
+  .note { color: var(--amber); font-size: 11px; padding: 8px 12px; border-left: 2px solid var(--amber); background: rgba(255, 195, 107, 0.06); margin: 10px 0; }
+  .warn { color: var(--red); font-size: 11px; padding: 8px 12px; border-left: 2px solid var(--red); background: rgba(255, 92, 122, 0.06); margin: 10px 0; }
+  ul { margin: 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  hr { border: none; border-top: 1px dashed var(--border); margin: 28px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Arogya Diagnostics — Deployment &amp; Connectivity Reference</h1>
+<p class="subtitle">How the three services talk to each other, what lives where, and every environment variable that wires them together.</p>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2>1 · The big picture</h2>
+
+<div class="diagram"><span class="box-lime">┌─────────────────────────┐</span>      <span class="arrow">HTTPS</span>      <span class="box-cyan">┌──────────────────────────┐</span>     <span class="arrow">TCP + SSL</span>    <span class="box-violet">┌──────────────────────────┐</span>
+<span class="box-lime">│   USER BROWSER          │</span> ───────────────▶ <span class="box-cyan">│   NETLIFY (frontend)     │</span> ───────────────▶ <span class="box-violet">│   RENDER (backend API)   │</span>
+<span class="box-lime">│   Chrome / Edge / Safari│</span>                 <span class="box-cyan">│   Static Vite/React SPA  │</span>                 <span class="box-violet">│   Node 22 + Express      │</span>
+<span class="box-lime">└─────────────────────────┘</span>                 <span class="box-cyan">│   arogya-clinic          │</span>                 <span class="box-violet">│   arogya-clinic          │</span>
+                                          <span class="box-cyan">│       .netlify.app       │</span>                 <span class="box-violet">│       .onrender.com      │</span>
+                                          <span class="box-cyan">└──────────────────────────┘</span>                 <span class="box-violet">└────────────┬─────────────┘</span>
+                                                                                                  │  pg + ssl
+                                                                                                  ▼
+                                                                                       <span class="box-amber">┌──────────────────────────┐</span>
+                                                                                       <span class="box-amber">│   SUPABASE (Postgres)    │</span>
+                                                                                       <span class="box-amber">│   arogya-diagnostics     │</span>
+                                                                                       <span class="box-amber">│   ap-south-1 (Mumbai)    │</span>
+                                                                                       <span class="box-amber">│   session pooler :5432   │</span>
+                                                                                       <span class="box-amber">└──────────────────────────┘</span>
+</div>
+
+<div class="panel">
+<h3>Request lifecycle (e.g. patient opens /doctors)</h3>
+<ol>
+  <li>Browser hits <code>https://arogya-clinic.netlify.app/doctors</code> → Netlify serves <code>index.html</code> + the React bundle.</li>
+  <li>React app boots, React Query calls <code>GET https://arogya-clinic.onrender.com/api/v1/doctors</code> using <code>VITE_API_URL</code> baked into the bundle at build time.</li>
+  <li>Render's Express app validates Origin against <code>CORS_ORIGIN</code> and replies with <code>Access-Control-Allow-Origin: https://arogya-clinic.netlify.app</code>.</li>
+  <li>Express runs <code>SELECT … FROM users WHERE role='doctor' AND is_active AND is_verified</code> on the <code>pg</code> pool.</li>
+  <li>The pool talks to Supabase's session pooler (TLS) → Supabase returns rows.</li>
+  <li>Express returns <code>{ data: [...] }</code> as JSON. React Query caches; component renders.</li>
+</ol>
+<div class="note"><strong>Files (report PDFs, payment proofs, profile photos):</strong> stored as <code>BYTEA</code> inside Postgres tables (migrations 0022, 0024, 0027). No object storage; Render's disk is ephemeral and intentionally unused.</div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2>2 · Source of truth — GitHub</h2>
+<div class="panel">
+<div class="row">
+  <span class="k">Repository</span><span class="v"><a href="https://github.com/neurozenith26-create/Arogya_Clinic" target="_blank">github.com/neurozenith26-create/Arogya_Clinic</a> <span class="tag tag-public">public</span></span>
+  <span class="k">Default branch</span><span class="v"><code>main</code> <span class="tag tag-prod">prod-deploy</span></span>
+  <span class="k">Other branches</span><span class="v"><code>staging</code>, <code>development</code>, <code>ui2</code> (all synced to main); <code>ui1</code> (legacy, untouched)</span>
+  <span class="k">Auto-deploy</span><span class="v">Render &amp; Netlify both watch <code>main</code>. Push → both rebuild automatically.</span>
+</div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2>3 · Supabase — managed Postgres</h2>
+
+<div class="panel panel-2">
+<div class="row">
+  <span class="k">Org</span><span class="v">neurozenith26-create's Org <span class="tag tag-public">Free plan</span></span>
+  <span class="k">Project name</span><span class="v"><code>arogya-diagnostics</code></span>
+  <span class="k">Environment</span><span class="v"><code>main</code> branch · <span class="tag tag-prod">production</span></span>
+  <span class="k">Region</span><span class="v">AWS <code>ap-south-1</code> (Mumbai) <span class="tag tag-public-url">low-latency from India</span></span>
+  <span class="k">Dashboard</span><span class="v"><a href="https://supabase.com/dashboard/project/hacvztdegmniiplumyfa" target="_blank">supabase.com/dashboard/project/hacvztdegmniiplumyfa</a></span>
+  <span class="k">Project ref</span><span class="v"><code>hacvztdegmniiplumyfa</code></span>
+</div>
+</div>
+
+<h3>Connection string (Session pooler — what backend uses)</h3>
+<pre><span class="cm"># Format:</span>
+postgresql://postgres.&lt;project-ref&gt;:&lt;PASSWORD&gt;@aws-1-ap-south-1.pooler.supabase.com:5432/postgres
+
+<span class="cm"># Current value (password stored on Render as DATABASE_URL):</span>
+<span class="k">host</span>     = aws-1-ap-south-1.pooler.supabase.com
+<span class="k">port</span>     = 5432
+<span class="k">database</span> = postgres
+<span class="k">user</span>     = postgres.hacvztdegmniiplumyfa
+<span class="k">password</span> = <span class="v">&lt;stored in Render env · contains '@' URL-encoded as %40&gt;</span>
+<span class="k">ssl</span>      = required (rejectUnauthorized: false)</pre>
+
+<div class="warn"><strong>Password rotation:</strong> Supabase → Project Settings → Database → <em>Reset database password</em>. After rotating, update <code>DATABASE_URL</code> in Render → Render auto-redeploys.</div>
+
+<h3>Schema state</h3>
+<div class="row">
+  <span class="k">Total migrations</span><span class="v">27 (latest: <code>0027_report_file_blob.sql</code>)</span>
+  <span class="k">Migration runner</span><span class="v"><code>pnpm --filter @arogya/backend run db:migrate</code> (reads <code>supabase/migrations/*.sql</code>)</span>
+  <span class="k">RLS</span><span class="v">Dropped in migration 0021. Backend owns all authorization via JWT middleware.</span>
+  <span class="k">File storage</span><span class="v">BYTEA columns: <code>reports.file_bytes</code>, <code>users.profile_photo_bytes</code>, <code>payments.payment_proof_bytes</code></span>
+</div>
+
+<h3>Tables (current row counts)</h3>
+<table>
+<thead><tr><th>Table</th><th>Rows</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td class="k">users</td><td>8</td><td class="purpose">4 admin/super_admin · 1 doctor · 3 patient</td></tr>
+<tr><td class="k">bookings</td><td>13</td><td class="purpose">Booking codes <code>AROGYA-TEST-202605-0000NN</code></td></tr>
+<tr><td class="k">departments</td><td>9 (9 active)</td><td class="purpose">Cardiology, Diabetology, Gynaecology, …</td></tr>
+<tr><td class="k">service_categories</td><td>7</td><td class="purpose">Pathology, Radiology, Health Packages, …</td></tr>
+<tr><td class="k">services</td><td>10 (5 active)</td><td class="purpose">X-Ray, ECG, USG, CBC, Halter, …</td></tr>
+<tr><td class="k">payments</td><td>—</td><td class="purpose">UPI-manual proofs stored as BYTEA</td></tr>
+<tr><td class="k">reports</td><td>—</td><td class="purpose">Lab reports/PDFs stored as BYTEA (post-0027)</td></tr>
+</tbody>
+</table>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2>4 · Render — backend API</h2>
+
+<div class="panel panel-2">
+<div class="row">
+  <span class="k">Service name</span><span class="v"><code>Arogya_Clinic</code></span>
+  <span class="k">Service ID</span><span class="v"><code>srv-d82m8d03kofs73cv1gog</code></span>
+  <span class="k">Type</span><span class="v">Web Service · Node 22 · <span class="tag tag-public">Free tier</span> (sleeps after 15 min idle)</span>
+  <span class="k">Region</span><span class="v">Singapore (closest to Mumbai DB)</span>
+  <span class="k">Public URL</span><span class="v"><a href="https://arogya-clinic.onrender.com" target="_blank">https://arogya-clinic.onrender.com</a> <span class="tag tag-public-url">public</span></span>
+  <span class="k">Health check</span><span class="v"><code>GET /api/v1/health</code> → <code>{ "status": "ok" }</code></span>
+  <span class="k">Repo / Branch</span><span class="v"><code>neurozenith26-create/Arogya_Clinic</code> · <code>main</code></span>
+  <span class="k">Auto-deploy</span><span class="v">On every push to <code>main</code></span>
+  <span class="k">Dashboard</span><span class="v"><a href="https://dashboard.render.com" target="_blank">dashboard.render.com</a> → My Workspace → My project → Production → Arogya_Clinic</span>
+</div>
+</div>
+
+<h3>Build &amp; start commands</h3>
+<pre><span class="cm"># Build (runs on every deploy):</span>
+npm install -g pnpm@10.20.0 && pnpm install --frozen-lockfile && pnpm --filter @arogya/backend build
+
+<span class="cm"># Start (long-running):</span>
+pnpm --filter @arogya/backend start</pre>
+
+<h3>Environment variables</h3>
+<table>
+<thead><tr><th>Key</th><th>Value</th><th>Purpose / source</th></tr></thead>
+<tbody>
+<tr><td class="k">NODE_ENV</td><td><code>production</code> <span class="tag tag-public">public</span></td><td class="purpose">Toggles strict logging, disables dev fallbacks.</td></tr>
+<tr><td class="k">TZ</td><td><code>Asia/Kolkata</code> <span class="tag tag-public">public</span></td><td class="purpose">Server timezone for date logic.</td></tr>
+<tr><td class="k">LOG_LEVEL</td><td><code>info</code> <span class="tag tag-public">public</span></td><td class="purpose">Pino verbosity.</td></tr>
+<tr><td class="k">DATABASE_URL</td><td><code>postgresql://postgres.…@aws-1-ap-south-1.pooler.supabase.com:5432/postgres</code> <span class="tag tag-secret">secret</span></td><td class="purpose">Supabase session-pooler URI. Password URL-encoded (<code>%40</code> for <code>@</code>).</td></tr>
+<tr><td class="k">DATABASE_SSL</td><td><code>true</code> <span class="tag tag-public">public</span></td><td class="purpose">Supabase requires TLS.</td></tr>
+<tr><td class="k">JWT_SECRET</td><td><code>&lt;128-hex random&gt;</code> <span class="tag tag-secret">secret</span></td><td class="purpose">Signs auth tokens. Rotate → invalidates all sessions.</td></tr>
+<tr><td class="k">JWT_EXPIRES_IN</td><td><code>7d</code> <span class="tag tag-public">public</span></td><td class="purpose">Token lifetime.</td></tr>
+<tr><td class="k">BCRYPT_ROUNDS</td><td><code>10</code> <span class="tag tag-public">public</span></td><td class="purpose">Password hashing cost factor.</td></tr>
+<tr><td class="k">OTP_EXPIRY_MINUTES</td><td><code>10</code> <span class="tag tag-public">public</span></td><td class="purpose">OTP validity window.</td></tr>
+<tr><td class="k">OTP_MAX_ATTEMPTS</td><td><code>5</code> <span class="tag tag-public">public</span></td><td class="purpose">Brute-force guard.</td></tr>
+<tr><td class="k">CORS_ORIGIN</td><td><code>https://arogya-clinic.netlify.app</code> <span class="tag tag-public-url">public</span></td><td class="purpose">Must EXACTLY match the frontend origin. Comma-separated for multi-origin.</td></tr>
+<tr><td class="k">STORAGE_DRIVER</td><td><code>local</code> <span class="tag tag-public">public</span></td><td class="purpose">Legacy adapter — not actively used. Files live in BYTEA.</td></tr>
+<tr><td class="k">STORAGE_LOCAL_PATH</td><td><code>./uploads</code> <span class="tag tag-public">public</span></td><td class="purpose">Legacy adapter path.</td></tr>
+<tr><td class="k">BACKEND_PUBLIC_URL</td><td><code>https://arogya-clinic.onrender.com</code> <span class="tag tag-public-url">public</span></td><td class="purpose">Used to build absolute file URLs for report downloads.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Optional vars</strong> (currently unset / blank): <code>RAZORPAY_KEY_ID</code>, <code>RAZORPAY_KEY_SECRET</code>, <code>RAZORPAY_WEBHOOK_SECRET</code>, <code>RESEND_API_KEY</code>, <code>EMAIL_FROM</code>, <code>MSG91_*</code>, <code>SENTRY_DSN</code>. Backend boots without them; corresponding features stay disabled.</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2>5 · Netlify — frontend SPA</h2>
+
+<div class="panel panel-2">
+<div class="row">
+  <span class="k">Team</span><span class="v"><code>Arogya_clinic</code></span>
+  <span class="k">Project name</span><span class="v"><code>arogya-clinic</code></span>
+  <span class="k">Public URL</span><span class="v"><a href="https://arogya-clinic.netlify.app" target="_blank">https://arogya-clinic.netlify.app</a> <span class="tag tag-public-url">public</span></span>
+  <span class="k">Repo / Branch</span><span class="v"><code>neurozenith26-create/Arogya_Clinic</code> · <code>main</code></span>
+  <span class="k">Base directory</span><span class="v">repository root <span class="tag tag-public">monorepo</span></span>
+  <span class="k">Project to deploy</span><span class="v"><code>frontend</code> (Vite workspace)</span>
+  <span class="k">Publish directory</span><span class="v"><code>frontend/dist</code></span>
+  <span class="k">Auto-deploy</span><span class="v">On every push to <code>main</code></span>
+  <span class="k">Dashboard</span><span class="v"><a href="https://app.netlify.com" target="_blank">app.netlify.com</a> → Arogya_clinic → Projects → arogya-clinic</span>
+</div>
+</div>
+
+<h3>Build command</h3>
+<pre>npm install -g pnpm@10.20.0 --force && pnpm install --frozen-lockfile && pnpm --filter @arogya/frontend build</pre>
+<div class="legend">Notes: <code>--force</code> overrides Netlify's pre-installed pnpm so our lockfile version is honored. No <code>cd ..</code> — Netlify already runs from repo root because base dir = root.</div>
+
+<h3>SPA fallback</h3>
+<pre><span class="cm"># frontend/public/_redirects (committed to repo):</span>
+/*    /index.html   200</pre>
+<div class="legend">Required so deep links like <code>/dashboard</code> or <code>/admin/bookings</code> don't return 404 after refresh.</div>
+
+<h3>Environment variables</h3>
+<table>
+<thead><tr><th>Key</th><th>Value</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td class="k">VITE_API_URL</td><td><code>https://arogya-clinic.onrender.com/api/v1</code> <span class="tag tag-public-url">public</span></td><td class="purpose">Base URL for all axios calls. Baked into bundle at build time.</td></tr>
+<tr><td class="k">VITE_USE_MOCK_DATA</td><td><code>false</code> <span class="tag tag-public">public</span></td><td class="purpose">Must be the literal string <code>false</code> — anything else (including unset) makes the app use bundled mock data.</td></tr>
+<tr><td class="k">VITE_PHASE_2_ENABLED</td><td><code>true</code> <span class="tag tag-public">public</span></td><td class="purpose">Unlocks bookings, payments, admin pages.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Why no secrets here:</strong> All <code>VITE_*</code> vars are baked into the public JS bundle anyone can read with View Source. Never put secrets in Vite env vars.</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2>6 · Demo credentials (dev only — change before real launch)</h2>
+
+<div class="panel">
+<table>
+<thead><tr><th>Role</th><th>Email</th><th>Password</th><th>Lands at</th></tr></thead>
+<tbody>
+<tr><td class="k">super_admin</td><td><code>admin@gmail.com</code></td><td><code>123</code></td><td><code>/admin</code></td></tr>
+<tr><td class="k">patient</td><td><code>patient@gmail.com</code></td><td><code>123</code></td><td><code>/dashboard</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2>7 · Day-2 operations cheatsheet</h2>
+
+<div class="grid-2">
+  <div class="panel">
+    <h3>Push code → live in ~5 min</h3>
+    <pre>git checkout main
+git pull
+<span class="cm"># …edit files…</span>
+git add . && git commit -m "feat: X"
+git push origin main:main
+
+<span class="cm"># Render rebuilds backend (~3 min)</span>
+<span class="cm"># Netlify rebuilds frontend (~2 min)</span></pre>
+  </div>
+
+  <div class="panel">
+    <h3>Run a new DB migration</h3>
+    <pre><span class="cm"># 1. Create the SQL file:</span>
+supabase/migrations/0028_xxx.sql
+
+<span class="cm"># 2. Apply against Supabase from laptop:</span>
+pnpm --filter @arogya/backend run db:migrate
+
+<span class="cm"># 3. Commit &amp; push — backend code that uses
+# the new columns deploys automatically.</span></pre>
+  </div>
+
+  <div class="panel">
+    <h3>Tail Render logs</h3>
+    <pre>Render → Arogya_Clinic → Logs
+<span class="cm"># or use:</span>
+render logs --service srv-d82m8d03kofs73cv1gog</pre>
+  </div>
+
+  <div class="panel">
+    <h3>Roll back a bad deploy</h3>
+    <pre><span class="cm"># Render:</span>
+Events → previous green deploy → Rollback
+
+<span class="cm"># Netlify:</span>
+Deploys → previous published → Publish deploy</pre>
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2>8 · Cost summary</h2>
+
+<table>
+<thead><tr><th>Service</th><th>Plan</th><th>Monthly</th><th>Limits / quirks</th></tr></thead>
+<tbody>
+<tr><td class="k">Supabase</td><td>Free</td><td>$0</td><td class="purpose">500 MB DB, 1 GB egress, project pauses after 7 days inactivity.</td></tr>
+<tr><td class="k">Render</td><td>Free</td><td>$0</td><td class="purpose">Sleeps after 15 min idle → 30–50 s cold start. Upgrade to <strong>Starter ($7/mo)</strong> before launch.</td></tr>
+<tr><td class="k">Netlify</td><td>Free</td><td>$0</td><td class="purpose">100 GB bandwidth, 300 build min / mo. Plenty of headroom.</td></tr>
+<tr><td class="k">Domain</td><td>—</td><td>$0</td><td class="purpose">Using free <code>.netlify.app</code> and <code>.onrender.com</code> subdomains. Custom domain optional.</td></tr>
+</tbody>
+</table>
+
+<hr>
+<p class="legend">Last verified live: 2026-05-14 · Backend commit <code>67abd1d</code> · All three services healthy and cross-talking with CORS green.</p>
+
+</div>
+</body>
+</html>
