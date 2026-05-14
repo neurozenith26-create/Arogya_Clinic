@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { Mail, Phone, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Mail, Phone, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -256,11 +256,22 @@ export default function LoginPage() {
               </form>
             )}
 
-            <div className="mt-6 border-t pt-4 text-center text-sm text-muted-foreground">
-              New patient?{' '}
-              <Link to="/auth/signup" className="font-medium text-primary hover:underline">
-                Create an account
-              </Link>
+            <div className="mt-6 space-y-2 border-t pt-4 text-center text-sm text-muted-foreground">
+              <div>
+                New patient?{' '}
+                <Link to="/auth/signup" className="font-medium text-primary hover:underline">
+                  Create an account
+                </Link>
+              </div>
+              <div>
+                <Link
+                  to="/"
+                  className="inline-flex items-center gap-1 text-xs hover:text-foreground"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Back to home page
+                </Link>
+              </div>
             </div>
           </CardContent>
         </Card>

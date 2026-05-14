@@ -1202,6 +1202,13 @@ export interface MyBookingDetail extends MyBookingRow {
     payment_proof_mime: string | null;
     proof_url: string | null;
   }>;
+  assigned_collector: {
+    id: string;
+    name: string;
+    mobile: string | null;
+    age: number | null;
+    photo_url: string | null;
+  } | null;
 }
 
 export function useMyBookings() {
@@ -1957,6 +1964,7 @@ export interface HomeCollectionRow {
 export interface CollectionStaff {
   id: string;
   name: string;
+  mobile: string | null;
 }
 
 export function useHomeCollections() {
@@ -2173,6 +2181,275 @@ export function useUpdateSetting() {
       qc.invalidateQueries({ queryKey: ['clinic', 'upi'] });
     },
   });
+}
+
+// ─── Admin: home collectors CRUD ─────────────────────────────────────────
+// Stored as admin users with admin_role='lab_tech', is_login_enabled=FALSE.
+
+export interface AdminCollectorRow {
+  id: string;
+  first_name: string;
+  last_name: string | null;
+  mobile: string;
+  date_of_birth: string | null;
+  gender: 'M' | 'F' | 'O' | null;
+  age: number | null;
+  is_active: boolean;
+  profile_photo_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollectorInput {
+  first_name: string;
+  last_name?: string | null;
+  mobile: string;
+  date_of_birth?: string | null;
+  gender?: 'M' | 'F' | 'O' | null;
+  is_active?: boolean;
+}
+
+export function useAdminCollectors(filters?: { q?: string }) {
+  return useQuery({
+    queryKey: ['admin', 'collectors', filters],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters?.q) params.set('q', filters.q);
+      const qs = params.toString();
+      const { data } = await api.get<{ data: AdminCollectorRow[] }>(
+        `/admin/collectors${qs ? `?${qs}` : ''}`,
+      );
+      return data.data;
+    },
+  });
+}
+
+function invalidateCollectorCaches(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['admin', 'collectors'] });
+  qc.invalidateQueries({ queryKey: ['admin', 'collection-staff'] });
+  qc.invalidateQueries({ queryKey: ['admin', 'home-collections'] });
+}
+
+export function useCreateCollector() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CollectorInput) => {
+      const { data } = await api.post<{ data: { id: string } }>(
+        '/admin/collectors',
+        input,
+      );
+      return data.data;
+    },
+    onSuccess: () => invalidateCollectorCaches(qc),
+  });
+}
+
+export function useUpdateCollector() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...input }: CollectorInput & { id: string }) => {
+      const { data } = await api.patch<{ data: { updated: boolean } }>(
+        `/admin/collectors/${id}`,
+        input,
+      );
+      return data.data;
+    },
+    onSuccess: () => invalidateCollectorCaches(qc),
+  });
+}
+
+export function useDeleteCollector() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await api.delete<{ data: { deleted: boolean } }>(
+        `/admin/collectors/${id}`,
+      );
+      return data.data;
+    },
+    onSuccess: () => invalidateCollectorCaches(qc),
+  });
+}
+
+export function useUploadCollectorPhoto(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append('file', file);
+      const { data } = await api.post<{ data: { url: string } }>(
+        `/admin/collectors/${id}/photo`,
+        fd,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      return data.data;
+    },
+    onSuccess: () => invalidateCollectorCaches(qc),
+  });
+}
+
+/**
+ * Build a fully-qualified photo URL for a collector. The `profile_photo_url`
+ * column stores a relative API path like `/collectors/<id>/photo`. Public —
+ * no auth required for the read (same as doctor photos).
+ */
+export function resolveCollectorPhotoUrl(
+  profile_photo_url: string | null | undefined,
+  cacheBust?: string | number,
+): string | null {
+  return resolveDoctorPhotoUrl(profile_photo_url, cacheBust);
+}
+
+// ─── Notifications (bell icon) ───────────────────────────────────────────
+
+export interface NotificationRow {
+  id: number;
+  audience: 'admin' | 'patient' | 'collector';
+  event: string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  booking_id: number | null;
+  booking_code: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+export function useMyNotifications() {
+  return useQuery({
+    queryKey: ['notifications', 'mine'],
+    queryFn: async () => {
+      const { data } = await api.get<{ data: NotificationRow[] }>('/notifications');
+      return data.data;
+    },
+    // Poll every 15s so the bell feels close-to-live without WebSockets.
+    refetchInterval: 15_000,
+    // Re-fetch when the tab gains focus, so admin sees new bookings as they
+    // come in without waiting for the next poll tick — same for patient when
+    // they bounce back from another tab.
+    refetchOnWindowFocus: true,
+    // Keep polling even when the tab isn't focused — the bell badge should
+    // still update if the user comes back after a while.
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useMarkNotificationRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const { data } = await api.post<{ data: { id: number; read: boolean } }>(
+        `/notifications/${id}/read`,
+      );
+      return data.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications', 'mine'] }),
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post<{ data: { read_all: boolean } }>(
+        `/notifications/read-all`,
+      );
+      return data.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications', 'mine'] }),
+  });
+}
+
+/**
+ * Mark every unread notification of these event types as read. Used by tab
+ * pages to clear their sidebar "NEW" badge as soon as the user visits.
+ *
+ * The hook is stable across renders so it's safe to call from useEffect with
+ * just `events` in the dependency array.
+ */
+export function useMarkNotificationsReadByEvents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (events: string[]) => {
+      if (events.length === 0) return { read_by_events: true, events };
+      const { data } = await api.post<{
+        data: { read_by_events: boolean; events: string[] };
+      }>('/notifications/read-by-events', { events });
+      return data.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications', 'mine'] }),
+  });
+}
+
+/**
+ * Convenience selector used by sidebar badges. Returns the count of currently
+ * unread notifications whose `event` matches any of the supplied tags.
+ */
+export function countUnreadByEvents(
+  notifications: NotificationRow[] | undefined,
+  events: readonly string[],
+): number {
+  if (!notifications) return 0;
+  const set = new Set(events);
+  return notifications.filter((n) => n.read_at === null && set.has(n.event)).length;
+}
+
+/**
+ * Live-link a single booking's detail cache to the notification stream.
+ *
+ * The patient's `useMyBooking(id)` is fetched once on mount; it doesn't poll
+ * (would be wasteful). But admin status changes / collector assignments /
+ * re-verifications always emit a notification carrying the affected
+ * `booking_id`. The notification feed IS polled every 15s, so whenever a
+ * fresh notification for THIS booking lands, we invalidate the booking's
+ * detail cache — which triggers a refetch and updates the UI within a tick.
+ *
+ * Result: the patient's "Home collection" stepper progresses live as admin
+ * marks each stage, with no manual refresh.
+ */
+export function useLiveBookingSync(bookingId: string | number | undefined) {
+  const { data: notifications } = useMyNotifications();
+  const qc = useQueryClient();
+  // Watch the most recent notification timestamp for this booking. When it
+  // changes (a new event arrived), invalidate. The first effect tick after
+  // mount is a no-op because no time has changed yet.
+  const targetId = bookingId === undefined ? null : Number(bookingId);
+  const latestForThis = notifications
+    ?.filter((n) => targetId !== null && n.booking_id === targetId)
+    .map((n) => n.created_at)[0] ?? null;
+  useEffect(() => {
+    if (bookingId === undefined) return;
+    qc.invalidateQueries({ queryKey: qk.myBooking(bookingId) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestForThis]);
+}
+
+/**
+ * Drop the sidebar "NEW" badge for the tab the user is currently looking at.
+ *
+ * Calls /notifications/read-by-events whenever the unread count for this
+ * page's event set goes above zero — both on initial mount AND when a fresh
+ * notification arrives via the bell poll. So the badge disappears within a
+ * tick of the user landing on the page, and stays gone for the duration of
+ * their visit even if new events fire while they watch.
+ *
+ * Pass the same event names listed in `badgeEvents` on the sidebar nav item.
+ */
+export function useClearTabBadges(events: readonly string[]) {
+  const { data: notifications } = useMyNotifications();
+  const markRead = useMarkNotificationsReadByEvents();
+  const unreadCount = countUnreadByEvents(notifications, events);
+  // Stringify so the dep array doesn't churn on a new array identity each
+  // render — the actual set of events is static per page.
+  const eventsKey = events.join(',');
+  useEffect(() => {
+    if (unreadCount > 0) {
+      markRead.mutate(events.slice());
+    }
+    // markRead is a stable mutation; events comes from a static literal in
+    // the page so we hash it for the dep array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unreadCount, eventsKey]);
 }
 
 export type { UseQueryOptions };

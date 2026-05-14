@@ -76,10 +76,16 @@ function CollectionCard({ booking }: { booking: HomeCollectionRow }) {
             }
             className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
           >
-            <option value="">Assign staff…</option>
+            <option value="">Assign home collector…</option>
+            {staff.length === 0 && (
+              <option disabled value="">
+                No collectors yet — add one in Home Collectors
+              </option>
+            )}
             {staff.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
+                {s.mobile ? ` · ${s.mobile}` : ''}
               </option>
             ))}
           </select>

@@ -2,13 +2,20 @@ import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Skeleton } from '../../components/ui/skeleton';
-import { useMyBookings } from '../../hooks/queries';
+import { useClearTabBadges, useMyBookings } from '../../hooks/queries';
 import { BookingStatusBadge } from '../../components/shared/BookingStatusBadge';
 import { formatCurrencyINR } from '../../lib/utils';
+
+const BOOKING_BADGE_EVENTS = [
+  'collector_assigned',
+  'collection_status_changed',
+  'reverified',
+] as const;
 
 export default function AppointmentsPage() {
   const { data: bookings = [], isLoading } = useMyBookings();
   const appointments = bookings.filter((b) => b.booking_type === 'doctor_appointment');
+  useClearTabBadges(BOOKING_BADGE_EVENTS);
 
   return (
     <Card>

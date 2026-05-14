@@ -45,27 +45,43 @@ const stats = [
   { value: '24h', label: 'Report TAT' },
 ];
 
+// Local media — served from /public/media. The MP4s aren't bundled by Vite,
+// so they don't bloat the JS payload. We pair every <video> with a poster
+// image so the LCP element renders instantly while the video streams in.
+const MEDIA = {
+  heroVideo: '/media/217018_medium.mp4',
+  heroPoster: '/media/excellentcc-covid-19-5169689_1920.jpg',
+  labVideo: '/media/262187_medium.mp4',
+  storyVideo: '/media/197486-905015022_medium.mp4',
+  banner: '/media/excellentcc-covid-19-5169689_1920.jpg',
+} as const;
+
 const labImages = [
-  // Unsplash lab/medical photography — free CDN-hosted, served with format hints
+  // First tile uses the local clinic banner so above-the-fold weight stays
+  // low; the rest are CDN-served Unsplash thumbnails (~50 KB each).
   {
-    url: 'https://images.unsplash.com/photo-1579154204601-01588f351e67?w=800&auto=format&fit=crop&q=70',
-    alt: 'Modern pathology lab',
-    caption: 'Modern pathology',
+    url: MEDIA.banner,
+    alt: 'Arogya pathology lab',
+    caption: 'Our clinic',
+    local: true,
   },
   {
     url: 'https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=800&auto=format&fit=crop&q=70',
     alt: 'Doctor consultation',
     caption: 'Expert consultations',
+    local: false,
   },
   {
     url: 'https://images.unsplash.com/photo-1579165466741-7f35e4755660?w=800&auto=format&fit=crop&q=70',
     alt: 'Diagnostic imaging',
     caption: 'Digital diagnostics',
+    local: false,
   },
   {
     url: 'https://images.unsplash.com/photo-1666214280391-8ff5bd3c0bf0?w=800&auto=format&fit=crop&q=70',
     alt: 'Home sample collection',
     caption: 'Home collection',
+    local: false,
   },
 ];
 
@@ -81,20 +97,20 @@ export default function HomePage() {
 
       {/* ── Hero with video background ──────────────────────────────────── */}
       <section className="relative overflow-hidden bg-gradient-hero text-white">
-        {/* Background video — graceful fallback to gradient */}
+        {/* Background video — local /public/media file (≈3.4 MB).
+            preload="metadata" so the browser only fetches headers up front;
+            the actual bytes stream in after the LCP poster image paints. */}
         <video
           className="absolute inset-0 h-full w-full object-cover opacity-30 mix-blend-overlay"
           autoPlay
           muted
           loop
           playsInline
-          poster="https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?w=1600&auto=format&fit=crop&q=70"
+          preload="metadata"
+          poster={MEDIA.heroPoster}
           aria-hidden="true"
         >
-          <source
-            src="https://cdn.coverr.co/videos/coverr-medical-laboratory-test-tubes-3478/1080p.mp4"
-            type="video/mp4"
-          />
+          <source src={MEDIA.heroVideo} type="video/mp4" />
         </video>
 
         {/* Floating decorative shapes */}
@@ -299,17 +315,37 @@ export default function HomePage() {
             </div>
 
             <div className="grid grid-cols-2 gap-3 sm:gap-4">
-              {labImages.map((img, i) => (
+              {/* First tile is the local lab video, autoplay-muted-loop —
+                  catches the eye and uses a real Arogya clinic clip rather
+                  than stock. preload="metadata" keeps the cost low until the
+                  user scrolls here. */}
+              <div className="group relative col-span-2 aspect-[16/10] overflow-hidden rounded-xl bg-card shadow-md animate-fade-up delay-100">
+                <video
+                  className="h-full w-full object-cover"
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  poster={MEDIA.heroPoster}
+                  aria-label="Inside the Arogya pathology lab"
+                >
+                  <source src={MEDIA.labVideo} type="video/mp4" />
+                </video>
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-3">
+                  <p className="text-xs font-medium text-white">Inside the lab</p>
+                </div>
+              </div>
+              {labImages.slice(1).map((img, i) => (
                 <div
                   key={img.url}
-                  className={`group relative overflow-hidden rounded-xl bg-card shadow-md animate-fade-up delay-${(i + 1) * 100} ${
-                    i === 0 ? 'col-span-2 aspect-[16/10]' : 'aspect-square'
-                  }`}
+                  className={`group relative overflow-hidden rounded-xl bg-card shadow-md animate-fade-up delay-${(i + 2) * 100} aspect-square`}
                 >
                   <img
                     src={img.url}
                     alt={img.alt}
                     loading="lazy"
+                    decoding="async"
                     className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                   />
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-3">

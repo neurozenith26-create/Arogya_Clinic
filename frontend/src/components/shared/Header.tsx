@@ -19,6 +19,7 @@ import {
   PHASE_2_ENABLED,
 } from '../../config/featureFlags';
 import { Logo } from './Logo';
+import { NotificationBell } from './NotificationBell';
 import { useCartStore } from '../../stores/cartStore';
 import { useAuthStore } from '../../stores/authStore';
 
@@ -146,6 +147,8 @@ export function Header() {
                   </span>
                 )}
               </Link>
+
+              {user && <NotificationBell className="ml-1" />}
 
               {user ? (
                 <div className="relative">

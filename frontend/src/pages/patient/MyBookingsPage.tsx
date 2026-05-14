@@ -14,7 +14,13 @@ import { Badge } from '../../components/ui/badge';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Input } from '../../components/ui/input';
 import { BookingStatusBadge } from '../../components/shared/BookingStatusBadge';
-import { useMyBookings } from '../../hooks/queries';
+import { useClearTabBadges, useMyBookings } from '../../hooks/queries';
+
+const BOOKING_BADGE_EVENTS = [
+  'collector_assigned',
+  'collection_status_changed',
+  'reverified',
+] as const;
 import { formatCurrencyINR } from '../../lib/utils';
 
 type Tab = 'all' | 'doctor_appointment' | 'test_booking';
@@ -23,6 +29,7 @@ export default function MyBookingsPage() {
   const { data: bookings = [], isLoading } = useMyBookings();
   const [tab, setTab] = useState<Tab>('all');
   const [search, setSearch] = useState('');
+  useClearTabBadges(BOOKING_BADGE_EVENTS);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

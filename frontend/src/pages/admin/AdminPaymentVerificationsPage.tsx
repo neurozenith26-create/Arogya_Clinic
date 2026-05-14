@@ -10,15 +10,21 @@ import { ProofPreview } from '../../components/payment/ProofPreview';
 import { ReVerifyPaymentModal } from '../../components/admin/ReVerifyPaymentModal';
 import {
   resolvePaymentProofUrl,
+  useClearTabBadges,
   usePendingReVerifyPayments,
   type PendingReVerifyRow,
 } from '../../hooks/queries';
+
+const PROOF_BADGE_EVENTS = ['proof_submitted'] as const;
 import { formatCurrencyINR } from '../../lib/utils';
 
 export default function AdminPaymentVerificationsPage() {
   const { data: rows = [], isLoading } = usePendingReVerifyPayments();
   const [active, setActive] = useState<PendingReVerifyRow | null>(null);
   const [search, setSearch] = useState('');
+  // Clear the sidebar NEW badge whenever this page is open — including when
+  // fresh proof submissions arrive while admin is already viewing the queue.
+  useClearTabBadges(PROOF_BADGE_EVENTS);
 
   // Client-side filter so admin can narrow the queue by patient name,
   // booking code (e.g. AROGYA-TEST-202605-000011), mobile, or UTR. The
