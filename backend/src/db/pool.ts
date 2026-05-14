@@ -1,6 +1,13 @@
 import pg from 'pg';
 import { env } from '../config/env.js';
 
+// Keep DATE (OID 1082) as a 'YYYY-MM-DD' string instead of a JS Date.
+// Default pg behavior parses DATE into a local-midnight Date which then
+// JSON-serializes to a UTC ISO timestamp (e.g. '2026-05-14T18:30:00.000Z'
+// for a date stored as 2026-05-15 in IST), surfacing as junk in the UI and
+// breaking the shared zod schemas that expect a plain 'YYYY-MM-DD' string.
+pg.types.setTypeParser(1082, (val) => val);
+
 export const pool = new pg.Pool({
   connectionString: env.DATABASE_URL,
   max: 10,
