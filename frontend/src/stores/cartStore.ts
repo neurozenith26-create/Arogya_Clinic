@@ -54,7 +54,12 @@ export const useCartStore = create<CartState>()(
                 service_id: service.id,
                 name: service.name,
                 slug: service.slug,
-                price: service.price,
+                // services.price is a Postgres NUMERIC; node-pg returns it as
+                // a string. TypeScript can't catch the mismatch at runtime —
+                // coerce here so the rest of the app can rely on price being
+                // a number (without this, `subtotal + homeVisitCharge` would
+                // silently string-concat: 6 + "4" → "64").
+                price: Number(service.price),
                 quantity: 1,
                 category_name: service.category_name,
                 is_package: service.is_package,
@@ -79,7 +84,10 @@ export const useCartStore = create<CartState>()(
         });
       },
       clear: () => set({ items: [], preferredVisitType: undefined }),
-      subtotal: () => get().items.reduce((sum, i) => sum + i.price * i.quantity, 0),
+      // Coerce both sides — older persisted carts (pre-fix) might still hold
+      // string prices from localStorage. Number() makes the sum honest.
+      subtotal: () =>
+        get().items.reduce((sum, i) => sum + Number(i.price) * Number(i.quantity), 0),
       count: () => get().items.reduce((sum, i) => sum + i.quantity, 0),
     }),
     { name: 'arogya-cart' },

@@ -116,8 +116,13 @@ export default function BookTestPage() {
     visitType === 'home_visit' ? liveHomeSlots.data ?? [] : inClinicSlots;
   const slotsLoading = visitType === 'home_visit' && liveHomeSlots.isLoading;
 
-  const homeVisitCharge = visitType === 'home_visit' ? pincodeResult?.home_visit_charge ?? 0 : 0;
-  const total = subtotal + homeVisitCharge;
+  // serviceable_pincodes.home_visit_charge is a Postgres NUMERIC column —
+  // node-pg returns NUMERIC as a string, not a number. Without the explicit
+  // Number() coercion, `subtotal + homeVisitCharge` triggers JS string
+  // concatenation when subtotal is a number: 6 + "4" → "64". Always coerce.
+  const homeVisitCharge =
+    visitType === 'home_visit' ? Number(pincodeResult?.home_visit_charge ?? 0) : 0;
+  const total = Number(subtotal) + Number(homeVisitCharge);
   const advance = Math.round(total / 2);
 
   const handlePincodeCheck = async () => {
