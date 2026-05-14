@@ -31,6 +31,7 @@ const PaymentCallbackPage = lazy(() => import('./pages/patient/PaymentCallbackPa
 const DashboardOverviewPage = lazy(() => import('./pages/patient/DashboardOverviewPage'));
 const AppointmentsPage = lazy(() => import('./pages/patient/AppointmentsPage'));
 const TestsPage = lazy(() => import('./pages/patient/TestsPage'));
+const MyBookingsPage = lazy(() => import('./pages/patient/MyBookingsPage'));
 const ReportsPage = lazy(() => import('./pages/patient/ReportsPage'));
 const ProfilePage = lazy(() => import('./pages/patient/ProfilePage'));
 const BookingDetailPage = lazy(() => import('./pages/patient/BookingDetailPage'));
@@ -59,6 +60,7 @@ const AdminInvoicesPage = lazy(() => import('./pages/admin/AdminInvoicesPage'));
 const AdminPaymentVerificationsPage = lazy(
   () => import('./pages/admin/AdminPaymentVerificationsPage'),
 );
+const AdminCollectorsPage = lazy(() => import('./pages/admin/AdminCollectorsPage'));
 const AdminPincodesPage = lazy(() => import('./pages/admin/AdminPincodesPage'));
 const WalkInBillPage = lazy(() => import('./pages/admin/WalkInBillPage'));
 const HomeCollectionBoardPage = lazy(() => import('./pages/admin/HomeCollectionBoardPage'));
@@ -137,6 +139,7 @@ export default function App() {
                 <Route path="/dashboard" element={<DashboardOverviewPage />} />
                 <Route path="/dashboard/appointments" element={<AppointmentsPage />} />
                 <Route path="/dashboard/tests" element={<TestsPage />} />
+                <Route path="/dashboard/bookings" element={<MyBookingsPage />} />
                 <Route path="/dashboard/reports" element={<ReportsPage />} />
                 <Route path="/dashboard/profile" element={<ProfilePage />} />
                 <Route path="/dashboard/bookings/:id" element={<BookingDetailPage />} />
@@ -175,6 +178,7 @@ export default function App() {
                 path="/admin/payment-verifications"
                 element={<AdminPaymentVerificationsPage />}
               />
+              <Route path="/admin/collectors" element={<AdminCollectorsPage />} />
               <Route path="/admin/feedback" element={<AdminFeedbackPage />} />
               <Route path="/admin/enquiries" element={<AdminEnquiriesPage />} />
               <Route path="/admin/analytics" element={<AdminAnalyticsPage />} />

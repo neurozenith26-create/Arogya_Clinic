@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { query, transaction } from '../../db/pool.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { HttpError } from '../../middleware/errorHandler.js';
+import { notify } from '../../lib/notify.js';
 
 const router: ExpressRouter = Router();
 
@@ -425,11 +426,13 @@ router.post(
           throw new HttpError(404, 'Doctor not found', 'NOT_FOUND');
         const fee = Number(consultFeeRes.rows[0].consultation_fee);
 
-        // Two-stage UPI-manual flow (see migration 0024):
-        // 1) Patient uploads proof → booking is INSTANTLY confirmed, payments
+        // Two-stage UPI-manual flow (see migrations 0024 + 0025):
+        // 1) Patient uploads proof → booking starts at 'in_progress' (slot is
+        //    locked but the clinic hasn't yet confirmed receipt), payments
         //    row created with payment_status='captured', verified_at=NULL.
         // 2) Admin re-verifies at sample-collection / clinic-visit time via
-        //    POST /admin/payments/:id/re-verify (fills verified_at).
+        //    POST /admin/payments/:id/re-verify, which flips the booking to
+        //    'confirmed' and stamps payments.verified_at = NOW().
         // 50% advance = round(total / 2); patient also sees a "Balance due"
         // line for the remainder.
         const advance = Math.round(fee / 2);
@@ -448,7 +451,7 @@ router.post(
             $1, 'doctor_appointment', 'online', $2,
             $3, $4, $5, $6, $7,
             $8, $8, $9, $10,
-            'confirmed', $11, $12, $1
+            'in_progress', $11, $12, $1
           ) RETURNING id, booking_code`,
           [
             req.user!.id,
@@ -500,6 +503,26 @@ router.post(
             proof.mimetype,
             data.upi_reference ?? null,
           ],
+        );
+
+        // Broadcast to all admins so the bell-icon dropdown shows a
+        // "patient submitted UPI proof — re-verify in person" entry. Sent
+        // inside the same tx so it rolls back if the booking insert does.
+        const patient = data.patient_snapshot as { first_name?: string; last_name?: string };
+        const patientName =
+          [patient.first_name, patient.last_name].filter(Boolean).join(' ') || 'Patient';
+        await notify(
+          {
+            user_id: null,
+            audience: 'admin',
+            event: 'proof_submitted',
+            title: `${patientName} submitted UPI proof`,
+            body: `Re-verify in person before the doctor visit (${bookingRes.rows[0].booking_code}).`,
+            link: '/admin/payment-verifications',
+            booking_id: bookingRes.rows[0].id,
+            booking_code: bookingRes.rows[0].booking_code,
+          },
+          client,
         );
 
         return { ...bookingRes.rows[0], payment_id: paymentRes.rows[0].id };
@@ -570,9 +593,11 @@ router.post(
 
         const total = subtotal + data.home_visit_charge;
 
-        // Two-stage UPI-manual flow (see migration 0024): proof upload =
-        // instant confirm; admin re-verifies in person at sample-collection
-        // time. 50% advance pre-filled because the patient just paid it.
+        // Two-stage UPI-manual flow (see migrations 0024 + 0025): proof
+        // upload locks the slot at booking_status='in_progress'; admin
+        // re-verifies in person at sample-collection time, which flips it
+        // to 'confirmed'. 50% advance pre-filled because the patient just
+        // paid it.
         const advance = Math.round(total / 2);
         const balance = total - advance;
         const paymentStatus = advance >= total ? 'paid' : 'partial';
@@ -589,7 +614,7 @@ router.post(
             $1, 'test_booking', 'online', $2,
             $3, $4, $5, $6,
             $7, $8, $9, $10, $11,
-            'confirmed', $12, $13,
+            'in_progress', $12, $13,
             $14, $1
           ) RETURNING id, booking_code`,
           [
@@ -652,6 +677,25 @@ router.post(
             proof.mimetype,
             data.upi_reference ?? null,
           ],
+        );
+
+        const patient = data.patient_snapshot as { first_name?: string; last_name?: string };
+        const patientName =
+          [patient.first_name, patient.last_name].filter(Boolean).join(' ') || 'Patient';
+        const visitDesc =
+          data.visit_type === 'home_visit' ? 'home collection' : 'in-clinic visit';
+        await notify(
+          {
+            user_id: null,
+            audience: 'admin',
+            event: 'proof_submitted',
+            title: `${patientName} submitted UPI proof`,
+            body: `Re-verify in person before the ${visitDesc} (${bookingRes.rows[0].booking_code}).`,
+            link: '/admin/payment-verifications',
+            booking_id: bookingRes.rows[0].id,
+            booking_code: bookingRes.rows[0].booking_code,
+          },
+          client,
         );
 
         return { ...bookingRes.rows[0], payment_id: paymentRes.rows[0].id };
@@ -814,12 +858,56 @@ router.get('/bookings/:id', requireAuth, requireRole('patient'), async (req, res
         ORDER BY created_at`,
       [req.params.id],
     );
+    // Assigned home collector — only relevant for home_visit test bookings.
+    // Patient sees name, mobile, age, photo so they can confirm the person
+    // at their door is the one the clinic dispatched.
+    const booking = bookingRes.rows[0] as {
+      assigned_staff_user_id: string | null;
+      visit_type: string;
+    };
+    let assigned_collector: {
+      id: string;
+      name: string;
+      mobile: string | null;
+      age: number | null;
+      photo_url: string | null;
+    } | null = null;
+    if (booking.assigned_staff_user_id && booking.visit_type === 'home_visit') {
+      const collectorRes = await query<{
+        id: string;
+        name: string;
+        mobile: string | null;
+        age: number | null;
+        profile_photo_url: string | null;
+      }>(
+        `SELECT id,
+                first_name || ' ' || COALESCE(last_name,'') AS name,
+                mobile,
+                CASE WHEN date_of_birth IS NULL THEN NULL
+                     ELSE EXTRACT(YEAR FROM AGE(date_of_birth))::int END AS age,
+                profile_photo_url
+           FROM users
+          WHERE id = $1`,
+        [booking.assigned_staff_user_id],
+      );
+      if (collectorRes.rows.length > 0) {
+        const c = collectorRes.rows[0];
+        assigned_collector = {
+          id: c.id,
+          name: c.name,
+          mobile: c.mobile,
+          age: c.age,
+          photo_url: c.profile_photo_url,
+        };
+      }
+    }
     res.json({
       data: {
         ...bookingRes.rows[0],
         items: items.rows,
         reports: reports.rows,
         payments: payments.rows,
+        assigned_collector,
       },
     });
   } catch (err) {
@@ -1141,10 +1229,12 @@ router.post('/admin/services', requireAuth, requireRole('admin', 'super_admin'),
       throw new HttpError(400, 'Selected category does not exist or is inactive', 'BAD_REQUEST');
     }
 
-    // Friendly duplicate check on slug + test_key (both UNIQUE).
+    // Friendly duplicate check on slug + test_key (both UNIQUE). Cast $2 to
+    // text explicitly — without the cast pg can't infer the parameter type
+    // when test_key is NULL (error 42P08 "could not determine data type").
     const dup = await query<{ slug: string; test_key: string | null }>(
       `SELECT slug, test_key FROM services
-       WHERE slug = $1 OR (test_key IS NOT NULL AND $2 IS NOT NULL AND test_key = $2)`,
+       WHERE slug = $1 OR ($2::text IS NOT NULL AND test_key = $2::text)`,
       [slug, data.test_key ?? null],
     );
     if (dup.rows.length > 0) {
@@ -2153,38 +2243,87 @@ router.post(
         .object({ notes: z.string().max(500).optional() })
         .parse(req.body ?? {});
 
-      // Idempotent: only flip if not already re-verified. Returns the row
-      // whether or not the UPDATE matched, so the caller can show "already
-      // verified by X on Y" without a second round-trip.
-      const result = await query<{
-        id: number;
-        booking_id: number;
-        verified_at: string | null;
-        verified_by_user_id: string | null;
-      }>(
-        `WITH upd AS (
-           UPDATE payments
-              SET verified_by_user_id = $1,
-                  verified_at         = NOW(),
-                  verification_notes  = COALESCE($2, verification_notes)
+      // Two-stage flow (migrations 0024 + 0025):
+      // 1. Flip payments.verified_at to NOW() (idempotent — only when NULL).
+      // 2. Promote bookings.booking_status from 'in_progress' to 'confirmed'.
+      //    Restricted to in_progress rows so admin's manual status moves
+      //    (e.g. confirmed→completed) aren't undone by a duplicate verify
+      //    click. Both happen inside a transaction so the patient never
+      //    sees a half-applied state.
+      const result = await transaction(async (client) => {
+        const upd = await client.query<{
+          id: number;
+          booking_id: number;
+          verified_at: string | null;
+          verified_by_user_id: string | null;
+          just_updated: boolean;
+        }>(
+          // `just_updated` flag distinguishes the just-flipped row (notify
+          // patient + flip booking_status) from the idempotent fall-through
+          // where the payment was already verified previously. Without this
+          // flag, a same-admin double-click would re-fire the patient
+          // notification because verified_by_user_id would still match.
+          `WITH upd AS (
+             UPDATE payments
+                SET verified_by_user_id = $1,
+                    verified_at         = NOW(),
+                    verification_notes  = COALESCE($2, verification_notes)
+              WHERE id = $3
+                AND payment_source = 'upi_manual'
+                AND verified_at IS NULL
+            RETURNING id, booking_id, verified_at, verified_by_user_id
+           )
+           SELECT id, booking_id, verified_at, verified_by_user_id, TRUE AS just_updated FROM upd
+           UNION ALL
+           SELECT id, booking_id, verified_at, verified_by_user_id, FALSE AS just_updated
+             FROM payments
             WHERE id = $3
-              AND payment_source = 'upi_manual'
-              AND verified_at IS NULL
-          RETURNING id, booking_id, verified_at, verified_by_user_id
-         )
-         SELECT id, booking_id, verified_at, verified_by_user_id FROM upd
-         UNION ALL
-         SELECT id, booking_id, verified_at, verified_by_user_id
-           FROM payments
-          WHERE id = $3
-            AND NOT EXISTS (SELECT 1 FROM upd)
-          LIMIT 1`,
-        [req.user!.id, notes ?? null, paymentId],
-      );
-      if (result.rows.length === 0) {
-        throw new HttpError(404, 'Payment not found', 'NOT_FOUND');
-      }
-      res.json({ data: result.rows[0] });
+              AND NOT EXISTS (SELECT 1 FROM upd)
+            LIMIT 1`,
+          [req.user!.id, notes ?? null, paymentId],
+        );
+        if (upd.rows.length === 0) {
+          throw new HttpError(404, 'Payment not found', 'NOT_FOUND');
+        }
+        const row = upd.rows[0];
+        await client.query(
+          `UPDATE bookings
+              SET booking_status = 'confirmed',
+                  updated_at = NOW()
+            WHERE id = $1
+              AND booking_status = 'in_progress'`,
+          [row.booking_id],
+        );
+        // Only notify when we actually flipped verified_at this call —
+        // duplicate clicks fall through the idempotent branch and are silent.
+        if (row.just_updated) {
+          const bookingRow = await client.query<{
+            patient_user_id: string | null;
+            booking_code: string;
+          }>(
+            `SELECT patient_user_id, booking_code FROM bookings WHERE id = $1`,
+            [row.booking_id],
+          );
+          const b = bookingRow.rows[0];
+          if (b?.patient_user_id) {
+            await notify(
+              {
+                user_id: b.patient_user_id,
+                audience: 'patient',
+                event: 'reverified',
+                title: 'UPI payment re-verified',
+                body: `Your UPI payment for ${b.booking_code} has been re-verified by the clinic. Your booking is confirmed.`,
+                link: `/dashboard/bookings/${row.booking_id}`,
+                booking_id: row.booking_id,
+                booking_code: b.booking_code,
+              },
+              client,
+            );
+          }
+        }
+        return row;
+      });
+      res.json({ data: result });
     } catch (err) {
       next(err);
     }
@@ -2503,5 +2642,863 @@ router.post(
     }
   },
 );
+
+// ─── Admin: patients (registered users + walk-in snapshots aggregated) ───
+//
+// "Patient" here means anyone who has booked or had a bill raised — both:
+//   1. Registered patient users (users.role='patient') and
+//   2. Walk-ins captured only in bookings.patient_snapshot (no auth account)
+// Aggregated by mobile so a single walk-in patient who later signs up doesn't
+// appear twice. Same logic the old mockPhase2-based page implemented in JS,
+// now done in SQL against the real bookings/users tables.
+
+router.get(
+  '/admin/patients',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const q = (req.query.q as string | undefined)?.trim();
+      const params: unknown[] = [];
+      let whereExtra = '';
+      if (q) {
+        params.push(`%${q}%`);
+        whereExtra = `WHERE name ILIKE $${params.length} OR mobile ILIKE $${params.length}`;
+      }
+      const sql = `
+        WITH per_booking AS (
+          SELECT
+            b.patient_user_id,
+            COALESCE(
+              NULLIF(TRIM(BOTH ' ' FROM
+                COALESCE(b.patient_snapshot->>'first_name','') || ' ' ||
+                COALESCE(b.patient_snapshot->>'last_name','')
+              ), ''),
+              (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = b.patient_user_id),
+              'Walk-in'
+            ) AS name,
+            COALESCE(
+              b.patient_snapshot->>'mobile',
+              (SELECT mobile FROM users WHERE id = b.patient_user_id),
+              ''
+            ) AS mobile,
+            COALESCE(
+              b.patient_snapshot->>'email',
+              (SELECT email FROM users WHERE id = b.patient_user_id)
+            ) AS email,
+            b.total_amount,
+            b.advance_amount,
+            b.created_at
+          FROM bookings b
+        )
+        SELECT
+          mobile,
+          MAX(name)                              AS name,
+          MAX(email)                             AS email,
+          BOOL_OR(patient_user_id IS NOT NULL)   AS is_registered,
+          MAX(patient_user_id::text)             AS user_id,
+          COUNT(*)::int                          AS bookings_count,
+          COALESCE(SUM(advance_amount), 0)::numeric AS total_spent,
+          MAX(created_at)                        AS last_booking_at
+        FROM per_booking
+        WHERE mobile <> ''
+        GROUP BY mobile
+        ${whereExtra}
+        ORDER BY last_booking_at DESC NULLS LAST
+        LIMIT 500
+      `;
+      const result = await query(sql, params);
+      res.json({ data: result.rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Admin: full payments ledger (all rows, all sources) ──────────────────
+
+router.get(
+  '/admin/payments-ledger',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const f = req.query as Record<string, string | undefined>;
+      const wheres: string[] = [];
+      const params: unknown[] = [];
+      if (f.source && ['razorpay', 'offline', 'upi_manual'].includes(f.source)) {
+        params.push(f.source);
+        wheres.push(`p.payment_source = $${params.length}`);
+      }
+      if (f.status) {
+        params.push(f.status);
+        wheres.push(`p.payment_status = $${params.length}`);
+      }
+      if (f.from && /^\d{4}-\d{2}-\d{2}$/.test(f.from)) {
+        params.push(f.from);
+        wheres.push(`p.created_at::date >= $${params.length}`);
+      }
+      if (f.to && /^\d{4}-\d{2}-\d{2}$/.test(f.to)) {
+        params.push(f.to);
+        wheres.push(`p.created_at::date <= $${params.length}`);
+      }
+      if (f.q) {
+        params.push(`%${f.q}%`);
+        wheres.push(
+          `(b.booking_code ILIKE $${params.length} OR b.patient_snapshot->>'first_name' ILIKE $${params.length} OR b.patient_snapshot->>'last_name' ILIKE $${params.length} OR b.patient_snapshot->>'mobile' ILIKE $${params.length})`,
+        );
+      }
+      const whereSql = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
+      const sql = `
+        SELECT
+          p.id, p.amount, p.refunded_amount, p.currency,
+          p.payment_source, p.payment_method, p.payment_status, p.payment_type,
+          p.captured_at, p.created_at,
+          p.upi_reference, p.verified_at,
+          b.id AS booking_id, b.booking_code, b.booking_type, b.booking_origin,
+          b.patient_snapshot
+        FROM payments p
+        JOIN bookings b ON b.id = p.booking_id
+        ${whereSql}
+        ORDER BY p.created_at DESC
+        LIMIT 500
+      `;
+      const result = await query(sql, params);
+      res.json({ data: result.rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Admin: home-collection dispatch board ────────────────────────────────
+// Returns only home-visit test bookings still in the collection workflow.
+
+router.get(
+  '/admin/home-collections',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (_req, res, next) => {
+    try {
+      const result = await query(
+        `SELECT b.id, b.booking_code, b.booking_status, b.collection_status,
+                b.scheduled_date, b.scheduled_start_time,
+                b.total_amount, b.advance_amount, b.balance_amount,
+                b.patient_snapshot, b.delivery_address,
+                b.assigned_staff_user_id,
+                (SELECT first_name || ' ' || COALESCE(last_name,'')
+                   FROM users WHERE id = b.assigned_staff_user_id) AS assigned_staff_name,
+                (SELECT mobile FROM users WHERE id = b.assigned_staff_user_id) AS assigned_staff_mobile
+           FROM bookings b
+          WHERE b.booking_type = 'test_booking'
+            AND b.visit_type = 'home_visit'
+            AND b.booking_status IN ('confirmed', 'in_progress')
+          ORDER BY b.scheduled_date NULLS LAST, b.scheduled_start_time NULLS LAST`,
+      );
+      res.json({ data: result.rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Home-collector roster used by the "Assign staff" dropdown. Reads from
+// the dedicated CRUD endpoints below — admin users stored with admin_role
+// = 'lab_tech', is_login_enabled = FALSE.
+router.get(
+  '/admin/collection-staff',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (_req, res, next) => {
+    try {
+      const result = await query<{ id: string; name: string; mobile: string | null }>(
+        `SELECT id,
+                first_name || ' ' || COALESCE(last_name,'') AS name,
+                mobile
+           FROM users
+          WHERE is_active = TRUE
+            AND role = 'admin'
+            AND admin_role = 'lab_tech'
+          ORDER BY first_name`,
+      );
+      res.json({ data: result.rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Admin: home-collector CRUD ────────────────────────────────────────────
+// Stored in users with role='admin' + admin_role='lab_tech' + is_login_enabled
+// = FALSE. Lets us reuse the existing BYTEA profile_photo + name + mobile
+// + DOB columns without a parallel table. Collectors don't log in — they're
+// pure profile records used by the home-collection dispatch board.
+
+const collectorCreateSchema = z.object({
+  first_name: z.string().trim().min(1).max(100),
+  last_name: z.string().trim().max(100).nullable().optional(),
+  mobile: z.string().trim().regex(/^\d{10,15}$/, 'Mobile must be 10–15 digits'),
+  date_of_birth: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
+    .nullable()
+    .optional(),
+  gender: z.enum(['M', 'F', 'O']).nullable().optional(),
+  is_active: z.boolean().optional(),
+});
+const collectorUpdateSchema = collectorCreateSchema.partial();
+
+router.get(
+  '/admin/collectors',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const q = (req.query.q as string | undefined)?.trim();
+      const params: unknown[] = [];
+      let where =
+        "WHERE role = 'admin' AND admin_role = 'lab_tech' AND COALESCE(is_login_enabled, FALSE) = FALSE";
+      if (q) {
+        params.push(`%${q}%`);
+        where += ` AND (first_name ILIKE $${params.length} OR last_name ILIKE $${params.length} OR mobile ILIKE $${params.length})`;
+      }
+      const result = await query(
+        `SELECT id, first_name, last_name, mobile, date_of_birth, gender, is_active,
+                profile_photo_url, updated_at, created_at,
+                CASE WHEN date_of_birth IS NULL THEN NULL
+                     ELSE EXTRACT(YEAR FROM AGE(date_of_birth))::int END AS age
+           FROM users
+           ${where}
+          ORDER BY is_active DESC, first_name
+          LIMIT 200`,
+        params,
+      );
+      res.json({ data: result.rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/admin/collectors',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const data = collectorCreateSchema.parse(req.body);
+      // mobile is partial-unique-indexed on active users — pre-check to
+      // give a friendly 409 instead of letting 23505 escape.
+      const dup = await query<{ id: string }>(
+        `SELECT id FROM users WHERE mobile = $1 AND is_active = TRUE`,
+        [data.mobile],
+      );
+      if (dup.rows.length > 0) {
+        throw new HttpError(
+          409,
+          `A user with mobile ${data.mobile} already exists. Edit that record instead.`,
+          'DUPLICATE_MOBILE',
+        );
+      }
+      const result = await query<{ id: string }>(
+        `INSERT INTO users
+           (role, admin_role, is_login_enabled, is_active,
+            first_name, last_name, mobile, date_of_birth, gender)
+         VALUES ('admin', 'lab_tech', FALSE, COALESCE($6::boolean, TRUE),
+                 $1, $2, $3, $4::date, $5)
+         RETURNING id`,
+        [
+          data.first_name,
+          data.last_name ?? null,
+          data.mobile,
+          data.date_of_birth ?? null,
+          data.gender ?? null,
+          data.is_active ?? null,
+        ],
+      );
+      res.status(201).json({ data: { id: result.rows[0].id } });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/admin/collectors/:id',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const data = collectorUpdateSchema.parse(req.body);
+      const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+      if (entries.length === 0) {
+        res.json({ data: { updated: false } });
+        return;
+      }
+      const set = entries.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+      const values = entries.map(([, v]) => v);
+      const result = await query<{ id: string }>(
+        `UPDATE users SET ${set}, updated_at = NOW()
+          WHERE id = $1 AND role = 'admin' AND admin_role = 'lab_tech'
+          RETURNING id`,
+        [req.params.id, ...values],
+      );
+      if (result.rows.length === 0) {
+        throw new HttpError(404, 'Collector not found', 'NOT_FOUND');
+      }
+      res.json({ data: { updated: true } });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete(
+  '/admin/collectors/:id',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      // Soft-delete only — historical assignments on bookings.assigned_staff_user_id
+      // stay valid so old dispatch records keep their collector name.
+      const result = await query<{ id: string }>(
+        `UPDATE users SET is_active = FALSE, updated_at = NOW()
+          WHERE id = $1 AND role = 'admin' AND admin_role = 'lab_tech'
+          RETURNING id`,
+        [req.params.id],
+      );
+      if (result.rows.length === 0) {
+        throw new HttpError(404, 'Collector not found', 'NOT_FOUND');
+      }
+      res.json({ data: { deleted: true } });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Admin: collection-status update (auto-en_route on assignment) ────────
+// Per UX requirement: when admin assigns a collector to a not_assigned
+// booking, the booking should jump straight to en_route — there's no
+// intermediate "assigned" stage for the patient to see.
+
+const collectionPatchSchema = z.object({
+  collection_status: z
+    .enum(['not_assigned', 'assigned', 'en_route', 'collected', 'received_at_lab'])
+    .optional(),
+  assigned_staff_user_id: z.string().uuid().nullable().optional(),
+});
+
+const STATUS_LABEL: Record<string, string> = {
+  not_assigned: 'awaiting collector assignment',
+  assigned: 'assigned to a collector — pickup scheduled',
+  en_route: 'on the way to your home',
+  collected: 'collected and on its way to the lab',
+  received_at_lab: 'received at the lab',
+};
+
+router.patch(
+  '/admin/bookings/:id/collection',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const data = collectionPatchSchema.parse(req.body);
+
+      const result = await transaction(async (client) => {
+        // Snapshot pre-change state so we know what to notify on.
+        const beforeRes = await client.query<{
+          id: number;
+          booking_code: string;
+          patient_user_id: string | null;
+          collection_status: string;
+          assigned_staff_user_id: string | null;
+        }>(
+          `SELECT id, booking_code, patient_user_id, collection_status, assigned_staff_user_id
+             FROM bookings WHERE id = $1 AND visit_type = 'home_visit'`,
+          [req.params.id],
+        );
+        if (beforeRes.rows.length === 0) {
+          throw new HttpError(404, 'Home-visit booking not found', 'NOT_FOUND');
+        }
+        const before = beforeRes.rows[0];
+
+        // Frontend sends `collection_status` explicitly with each transition:
+        //   not_assigned → assigned   (admin picks collector from dropdown)
+        //   assigned     → en_route   (admin marks "On the way")
+        //   en_route     → collected  (admin marks "Sample collected")
+        //   collected    → received_at_lab (admin marks "At lab")
+        // Backend just applies whatever the admin sent — no auto-skipping.
+        const nextStatus = data.collection_status;
+
+        const sets: string[] = [];
+        const params: unknown[] = [];
+        if (nextStatus !== undefined) {
+          params.push(nextStatus);
+          sets.push(`collection_status = $${params.length}`);
+        }
+        if (data.assigned_staff_user_id !== undefined) {
+          params.push(data.assigned_staff_user_id);
+          sets.push(`assigned_staff_user_id = $${params.length}`);
+        }
+        if (sets.length === 0) return { id: before.id, collection_status: before.collection_status, assigned_staff_user_id: before.assigned_staff_user_id, updated: false };
+
+        params.push(req.params.id);
+        const upd = await client.query<{
+          id: number;
+          collection_status: string;
+          assigned_staff_user_id: string | null;
+        }>(
+          `UPDATE bookings SET ${sets.join(', ')}, updated_at = NOW()
+            WHERE id = $${params.length}
+            RETURNING id, collection_status, assigned_staff_user_id`,
+          params,
+        );
+
+        // Patient notifications. Skip if booking has no patient_user_id
+        // (walk-ins captured only in patient_snapshot).
+        if (before.patient_user_id) {
+          const assignedNow =
+            data.assigned_staff_user_id != null &&
+            data.assigned_staff_user_id !== before.assigned_staff_user_id;
+          const statusMoved =
+            nextStatus !== undefined && nextStatus !== before.collection_status;
+
+          // (a) Newly-assigned collector — fires once per assignment swap and
+          // takes priority over the status-change notification (the assignment
+          // copy is more informative).
+          if (assignedNow) {
+            const collectorRow = await client.query<{ name: string; mobile: string | null }>(
+              `SELECT first_name || ' ' || COALESCE(last_name,'') AS name, mobile
+                 FROM users WHERE id = $1`,
+              [data.assigned_staff_user_id],
+            );
+            const c = collectorRow.rows[0];
+            if (c) {
+              await notify(
+                {
+                  user_id: before.patient_user_id,
+                  audience: 'patient',
+                  event: 'collector_assigned',
+                  title: `${c.name} is on the way`,
+                  body: `Your sample collection for ${before.booking_code} is assigned to ${c.name}${c.mobile ? ` (${c.mobile})` : ''}. Track status from your booking page.`,
+                  link: `/dashboard/bookings/${before.id}`,
+                  booking_id: before.id,
+                  booking_code: before.booking_code,
+                },
+                client,
+              );
+            }
+          }
+          // (b) Status moved — let the patient know, UNLESS we just sent the
+          // assignment notification (which already conveys "status changed to
+          // assigned"). Subsequent moves (assigned → en_route → collected …)
+          // come through this branch alone.
+          if (statusMoved && !assignedNow) {
+            await notify(
+              {
+                user_id: before.patient_user_id,
+                audience: 'patient',
+                event: 'collection_status_changed',
+                title: 'Sample collection update',
+                body: `${before.booking_code}: your sample is ${STATUS_LABEL[nextStatus!] ?? nextStatus}.`,
+                link: `/dashboard/bookings/${before.id}`,
+                booking_id: before.id,
+                booking_code: before.booking_code,
+              },
+              client,
+            );
+          }
+        }
+
+        return upd.rows[0];
+      });
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Admin: reviews moderation ────────────────────────────────────────────
+
+router.get(
+  '/admin/reviews',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const params: unknown[] = [];
+      let where = '';
+      if (status && ['pending', 'approved', 'rejected', 'hidden'].includes(status)) {
+        params.push(status);
+        where = `WHERE r.status = $${params.length}`;
+      }
+      const result = await query(
+        `SELECT r.id, r.rating, r.comment, r.status, r.clinic_reply, r.replied_at,
+                r.rejection_reason, r.created_at,
+                r.doctor_user_id, r.patient_user_id,
+                (SELECT first_name FROM users WHERE id = r.patient_user_id) AS patient_first_name,
+                (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = r.doctor_user_id) AS doctor_name
+           FROM reviews r
+           ${where}
+          ORDER BY r.created_at DESC
+          LIMIT 200`,
+        params,
+      );
+      res.json({ data: result.rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const reviewModerateSchema = z.object({
+  status: z.enum(['pending', 'approved', 'rejected', 'hidden']).optional(),
+  rejection_reason: z.string().max(500).optional(),
+  clinic_reply: z.string().max(2000).optional(),
+});
+
+router.patch(
+  '/admin/reviews/:id',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const data = reviewModerateSchema.parse(req.body);
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      if (data.status !== undefined) {
+        params.push(data.status);
+        sets.push(`status = $${params.length}`);
+      }
+      if (data.rejection_reason !== undefined) {
+        params.push(data.rejection_reason);
+        sets.push(`rejection_reason = $${params.length}`);
+      }
+      if (data.clinic_reply !== undefined) {
+        params.push(data.clinic_reply);
+        sets.push(`clinic_reply = $${params.length}`);
+        params.push(req.user!.id);
+        sets.push(`replied_by = $${params.length}`);
+        sets.push(`replied_at = NOW()`);
+      }
+      if (sets.length === 0) {
+        res.json({ data: { updated: false } });
+        return;
+      }
+      params.push(req.params.id);
+      const result = await query(
+        `UPDATE reviews SET ${sets.join(', ')}, updated_at = NOW()
+          WHERE id = $${params.length}
+          RETURNING id`,
+        params,
+      );
+      if (result.rows.length === 0) {
+        throw new HttpError(404, 'Review not found', 'NOT_FOUND');
+      }
+      res.json({ data: { updated: true } });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Admin: enquiries (contact form submissions) ──────────────────────────
+
+router.get(
+  '/admin/enquiries',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const params: unknown[] = [];
+      let where = '';
+      if (status && ['new', 'read', 'replied', 'closed'].includes(status)) {
+        params.push(status);
+        where = `WHERE status = $${params.length}`;
+      }
+      const result = await query(
+        `SELECT id, name, email, phone, subject, message, status,
+                responded_at, created_at
+           FROM enquiries
+           ${where}
+          ORDER BY created_at DESC
+          LIMIT 500`,
+        params,
+      );
+      res.json({ data: result.rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/admin/enquiries/:id',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const { status } = z
+        .object({ status: z.enum(['new', 'read', 'replied', 'closed']) })
+        .parse(req.body);
+      const respondedSet =
+        status === 'replied' || status === 'closed'
+          ? ', responded_at = NOW(), responded_by = $3'
+          : '';
+      const params: unknown[] = [status, req.params.id];
+      if (respondedSet) params.push(req.user!.id);
+      const result = await query(
+        `UPDATE enquiries SET status = $1${respondedSet}, updated_at = NOW()
+          WHERE id = $2 RETURNING id`,
+        params,
+      );
+      if (result.rows.length === 0) {
+        throw new HttpError(404, 'Enquiry not found', 'NOT_FOUND');
+      }
+      res.json({ data: { updated: true } });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Admin: audit log (read-only) ─────────────────────────────────────────
+
+router.get(
+  '/admin/audit-log',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 100, 500);
+      const result = await query(
+        `SELECT a.id, a.action, a.entity_type, a.entity_id, a.before_data, a.after_data,
+                a.ip_address, a.user_agent, a.created_at,
+                a.actor_user_id, a.actor_role,
+                COALESCE(
+                  (SELECT first_name || ' ' || COALESCE(last_name,'')
+                     FROM users WHERE id = a.actor_user_id),
+                  'System'
+                ) AS actor_name
+           FROM audit_log a
+          ORDER BY a.created_at DESC
+          LIMIT $1`,
+        [limit],
+      );
+      res.json({ data: result.rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Admin: clinic settings ───────────────────────────────────────────────
+// Generic key/value store. Frontend reads the full map, then PATCHes
+// individual keys. value is JSONB so we accept any JSON-encodable value.
+
+router.get(
+  '/admin/settings',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (_req, res, next) => {
+    try {
+      const result = await query(
+        `SELECT key, value, description, updated_at FROM clinic_settings ORDER BY key`,
+      );
+      res.json({ data: result.rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const settingUpsertSchema = z.object({
+  // value can be any JSON-encodable shape — string, number, bool, object.
+  value: z.unknown(),
+  description: z.string().max(500).optional(),
+});
+
+router.put(
+  '/admin/settings/:key',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req, res, next) => {
+    try {
+      const key = String(req.params.key ?? '');
+      if (!/^[a-z0-9_]{1,100}$/.test(key)) {
+        throw new HttpError(400, 'Invalid setting key', 'BAD_REQUEST');
+      }
+      const data = settingUpsertSchema.parse(req.body);
+      const result = await query<{ key: string }>(
+        `INSERT INTO clinic_settings (key, value, description, updated_by)
+              VALUES ($1, $2::jsonb, $3, $4)
+         ON CONFLICT (key) DO UPDATE
+               SET value       = EXCLUDED.value,
+                   description = COALESCE(EXCLUDED.description, clinic_settings.description),
+                   updated_by  = EXCLUDED.updated_by,
+                   updated_at  = NOW()
+         RETURNING key`,
+        [key, JSON.stringify(data.value), data.description ?? null, req.user!.id],
+      );
+      res.json({ data: { key: result.rows[0].key, updated: true } });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Notifications (bell-icon feed) ───────────────────────────────────────
+//
+// Two recipient types:
+//   - audience='patient'  → user_id = the patient's id          (direct)
+//   - audience='admin'    → user_id = NULL                       (broadcast to every admin)
+// We track per-user "read" state for broadcasts via notification_reads, and
+// per-user "read" state for direct messages via the row's own read_at.
+
+router.get('/notifications', requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user!.id;
+    const role = req.user!.role;
+    const sql =
+      role === 'admin' || role === 'super_admin'
+        ? `SELECT n.id, n.audience, n.event, n.title, n.body, n.link,
+                  n.booking_id, n.booking_code, n.created_at,
+                  CASE WHEN n.user_id IS NULL
+                       THEN nr.read_at
+                       ELSE n.read_at END AS read_at
+             FROM notifications n
+             LEFT JOIN notification_reads nr
+                    ON nr.notification_id = n.id AND nr.user_id = $1
+            WHERE (n.audience = 'admin' AND n.user_id IS NULL)
+               OR (n.user_id = $1)
+            ORDER BY n.created_at DESC
+            LIMIT 50`
+        : `SELECT n.id, n.audience, n.event, n.title, n.body, n.link,
+                  n.booking_id, n.booking_code, n.created_at, n.read_at
+             FROM notifications n
+            WHERE n.user_id = $1
+            ORDER BY n.created_at DESC
+            LIMIT 50`;
+    const result = await query(sql, [userId]);
+    res.json({ data: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/notifications/:id/read', requireAuth, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) {
+      throw new HttpError(400, 'Invalid notification id', 'BAD_REQUEST');
+    }
+    const userId = req.user!.id;
+    // Find the row first so we know whether it's a broadcast (user_id IS NULL)
+    // or a direct message. Different write paths.
+    const row = await query<{ user_id: string | null; audience: string }>(
+      `SELECT user_id, audience FROM notifications WHERE id = $1`,
+      [id],
+    );
+    if (row.rows.length === 0) {
+      throw new HttpError(404, 'Notification not found', 'NOT_FOUND');
+    }
+    const n = row.rows[0];
+    if (n.user_id === null) {
+      // Broadcast — record per-user read state.
+      await query(
+        `INSERT INTO notification_reads (notification_id, user_id)
+              VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [id, userId],
+      );
+    } else if (n.user_id === userId) {
+      // Direct — stamp the row's own read_at.
+      await query(
+        `UPDATE notifications SET read_at = NOW() WHERE id = $1 AND read_at IS NULL`,
+        [id],
+      );
+    } else {
+      throw new HttpError(403, 'Not your notification', 'FORBIDDEN');
+    }
+    res.json({ data: { id, read: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Bulk mark-read scoped to specific event types. Used by the sidebar "NEW"
+// badges — each page registers the events that belong to it (Reports tab
+// owns `report_uploaded`, My Bookings owns `collector_assigned`, etc.) and
+// calls this on mount to clear the badge for that user.
+router.post('/notifications/read-by-events', requireAuth, async (req, res, next) => {
+  try {
+    const { events } = z
+      .object({ events: z.array(z.string().max(50)).min(1).max(20) })
+      .parse(req.body);
+    const userId = req.user!.id;
+    const role = req.user!.role;
+    // Admin broadcasts use the per-user notification_reads side-table; direct
+    // notifications use the row's own read_at. Mark both flavours in one call.
+    if (role === 'admin' || role === 'super_admin') {
+      await query(
+        `INSERT INTO notification_reads (notification_id, user_id)
+         SELECT n.id, $1 FROM notifications n
+          LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = $1
+         WHERE n.user_id IS NULL
+           AND n.audience = 'admin'
+           AND n.event = ANY($2::text[])
+           AND nr.notification_id IS NULL
+         ON CONFLICT DO NOTHING`,
+        [userId, events],
+      );
+    }
+    await query(
+      `UPDATE notifications SET read_at = NOW()
+        WHERE user_id = $1
+          AND event = ANY($2::text[])
+          AND read_at IS NULL`,
+      [userId, events],
+    );
+    res.json({ data: { read_by_events: true, events } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/notifications/read-all', requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user!.id;
+    const role = req.user!.role;
+    if (role === 'admin' || role === 'super_admin') {
+      // Mark every unread broadcast + every unread direct as read for this user.
+      await query(
+        `INSERT INTO notification_reads (notification_id, user_id)
+         SELECT n.id, $1 FROM notifications n
+          LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = $1
+         WHERE n.user_id IS NULL AND n.audience = 'admin' AND nr.notification_id IS NULL
+         ON CONFLICT DO NOTHING`,
+        [userId],
+      );
+      await query(
+        `UPDATE notifications SET read_at = NOW()
+          WHERE user_id = $1 AND read_at IS NULL`,
+        [userId],
+      );
+    } else {
+      await query(
+        `UPDATE notifications SET read_at = NOW()
+          WHERE user_id = $1 AND read_at IS NULL`,
+        [userId],
+      );
+    }
+    res.json({ data: { read_all: true } });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;

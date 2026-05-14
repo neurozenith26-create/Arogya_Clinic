@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import {
   LayoutDashboard,
@@ -16,6 +16,8 @@ import {
   MapPin,
   BarChart3,
   ShieldCheck,
+  UserCog,
+  ExternalLink,
   Settings,
   LogOut,
   Home,
@@ -26,7 +28,12 @@ import {
 import { cn } from '../lib/utils';
 import { useAuthStore } from '../stores/authStore';
 import { Logo } from '../components/shared/Logo';
-import { usePendingReVerifyPayments } from '../hooks/queries';
+import { NotificationBell } from '../components/shared/NotificationBell';
+import {
+  countUnreadByEvents,
+  useMyNotifications,
+  usePendingReVerifyPayments,
+} from '../hooks/queries';
 
 // Feedback is intentionally hidden from the sidebar. The page and route
 // still exist (see App.tsx) — visit /admin/feedback directly to reach it.
@@ -38,7 +45,12 @@ type NavItem = {
   label: string;
   icon: typeof LayoutDashboard;
   end?: boolean;
+  /** Domain-count badge (e.g. items awaiting action). Keep this for things
+   *  that aren't notification-driven, like the pending re-verify queue. */
   badgeKey?: 'pendingReVerify';
+  /** Notification event tags — when any are unread for this user, a small
+   *  "N NEW" pill renders on the right of the nav item. */
+  badgeEvents?: readonly string[];
 };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -53,14 +65,24 @@ const navGroups: NavGroup[] = [
   {
     label: 'Operations',
     items: [
-      { to: '/admin/bookings', label: 'Bookings', icon: Calendar },
+      {
+        to: '/admin/bookings',
+        label: 'Bookings',
+        icon: Calendar,
+        // A patient submitting UPI proof creates a new booking row, so the
+        // Bookings tab gets a NEW badge too — opening either Bookings or
+        // Payment re-verify clears the notification (same underlying event).
+        badgeEvents: ['proof_submitted'],
+      },
       { to: '/admin/walk-in-bills', label: 'Walk-in Bills', icon: ReceiptText },
       { to: '/admin/home-collections', label: 'Home Collections', icon: Home },
+      { to: '/admin/collectors', label: 'Home Collectors', icon: UserCog },
       {
         to: '/admin/payment-verifications',
         label: 'Payment re-verify',
         icon: ShieldCheck,
         badgeKey: 'pendingReVerify',
+        badgeEvents: ['proof_submitted'],
       },
       { to: '/admin/patients', label: 'Patients', icon: Users },
     ],
@@ -87,7 +109,10 @@ const navGroups: NavGroup[] = [
   },
   {
     label: 'System',
-    items: [{ to: '/admin/settings', label: 'Settings', icon: Settings }],
+    items: [
+      { to: '/admin/settings', label: 'Settings', icon: Settings },
+      { to: '/', label: 'Back to home', icon: Home, end: true },
+    ],
   },
 ];
 
@@ -98,6 +123,7 @@ export function AdminLayout() {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { data: pendingReVerify = [] } = usePendingReVerifyPayments();
+  const { data: notifications } = useMyNotifications();
   const badgeCounts: Record<string, number> = {
     pendingReVerify: pendingReVerify.length,
   };
@@ -153,10 +179,16 @@ export function AdminLayout() {
                   {group.label}
                 </div>
                 {group.items.map((item) => {
-                  const count =
+                  const domainCount =
                     'badgeKey' in item && item.badgeKey
                       ? badgeCounts[item.badgeKey] ?? 0
                       : 0;
+                  // Notification-driven "NEW" badge — separate from the
+                  // domain-count badge so admin can see "5 pending re-verify
+                  // (queue)" + "2 NEW (new submissions since last visit)".
+                  const newCount = item.badgeEvents
+                    ? countUnreadByEvents(notifications, item.badgeEvents)
+                    : 0;
                   return (
                     <NavLink
                       key={item.to}
@@ -173,9 +205,20 @@ export function AdminLayout() {
                     >
                       <item.icon className="h-4 w-4" />
                       <span className="flex-1">{item.label}</span>
-                      {count > 0 && (
-                        <span className="rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground">
-                          {count}
+                      {newCount > 0 && (
+                        <span
+                          className="rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-destructive-foreground"
+                          title={`${newCount} new notification${newCount > 1 ? 's' : ''}`}
+                        >
+                          {newCount} NEW
+                        </span>
+                      )}
+                      {domainCount > 0 && (
+                        <span
+                          className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground"
+                          title={`${domainCount} item${domainCount > 1 ? 's' : ''} awaiting action`}
+                        >
+                          {domainCount}
                         </span>
                       )}
                     </NavLink>
@@ -209,9 +252,30 @@ export function AdminLayout() {
               <Logo size={28} />
               <span className="font-bold text-primary">Arogya Admin</span>
             </div>
-            <button onClick={handleLogout} aria-label="Sign out" className="rounded p-2 hover:bg-accent">
-              <LogOut className="h-5 w-5" />
-            </button>
+            <div className="flex items-center gap-1">
+              <NotificationBell />
+              <button onClick={handleLogout} aria-label="Sign out" className="rounded p-2 hover:bg-accent">
+                <LogOut className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        </header>
+        {/* Desktop top bar — sticky bell so admin can see new patient
+            submissions without scrolling back up. Also exposes a quick
+            "View public site" jump so admin can peek at what patients see
+            without logging out. */}
+        <header className="sticky top-0 z-30 hidden border-b bg-background/90 backdrop-blur lg:block">
+          <div className="flex h-12 items-center justify-end gap-3 px-6">
+            <Link
+              to="/"
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              View public site
+            </Link>
+            <NotificationBell />
           </div>
         </header>
         <main className="animate-fade-in p-4 sm:p-6 lg:p-8">

@@ -53,30 +53,36 @@ const MEDIA = {
   heroVideo: '/media/217018_medium.mp4',
   heroPoster: '/media/excellentcc-covid-19-5169689_1920.jpg',
   labVideo: '/media/262187_medium.mp4',
+  storyVideo: '/media/197486-905015022_medium.mp4',
   banner: '/media/excellentcc-covid-19-5169689_1920.jpg',
 } as const;
 
 const labImages = [
-  // Unsplash lab/medical photography — free CDN-hosted, served with format hints
+  // First tile uses the local clinic banner so above-the-fold weight stays
+  // low; the rest are CDN-served Unsplash thumbnails (~50 KB each).
   {
-    url: 'https://images.unsplash.com/photo-1579154204601-01588f351e67?w=800&auto=format&fit=crop&q=70',
-    alt: 'Modern pathology lab',
-    caption: 'Modern pathology',
+    url: MEDIA.banner,
+    alt: 'Arogya pathology lab',
+    caption: 'Our clinic',
+    local: true,
   },
   {
     url: 'https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=800&auto=format&fit=crop&q=70',
     alt: 'Doctor consultation',
     caption: 'Expert consultations',
+    local: false,
   },
   {
     url: 'https://images.unsplash.com/photo-1579165466741-7f35e4755660?w=800&auto=format&fit=crop&q=70',
     alt: 'Diagnostic imaging',
     caption: 'Digital diagnostics',
+    local: false,
   },
   {
     url: 'https://images.unsplash.com/photo-1666214280391-8ff5bd3c0bf0?w=800&auto=format&fit=crop&q=70',
     alt: 'Home sample collection',
     caption: 'Home collection',
+    local: false,
   },
 ];
 

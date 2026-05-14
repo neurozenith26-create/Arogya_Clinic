@@ -3,9 +3,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Skeleton } from '../../components/ui/skeleton';
-import { useMyBookings } from '../../hooks/queries';
+import { useClearTabBadges, useMyBookings } from '../../hooks/queries';
 import { BookingStatusBadge } from '../../components/shared/BookingStatusBadge';
 import { formatCurrencyINR } from '../../lib/utils';
+
+const BOOKING_BADGE_EVENTS = [
+  'collector_assigned',
+  'collection_status_changed',
+  'reverified',
+] as const;
 
 const collectionLabel: Record<string, string> = {
   not_required: 'In-clinic',
@@ -19,6 +25,7 @@ const collectionLabel: Record<string, string> = {
 export default function TestsPage() {
   const { data: bookings = [], isLoading } = useMyBookings();
   const tests = bookings.filter((b) => b.booking_type === 'test_booking');
+  useClearTabBadges(BOOKING_BADGE_EVENTS);
 
   return (
     <Card>

@@ -1,6 +1,16 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import { Home, LogOut, Menu, Phone, ShoppingCart, User, X } from 'lucide-react';
+import {
+  CalendarCheck,
+  FileText,
+  Home,
+  LogOut,
+  Menu,
+  Phone,
+  ShoppingCart,
+  User,
+  X,
+} from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
   CLINIC_FULL_NAME,
@@ -9,6 +19,7 @@ import {
   PHASE_2_ENABLED,
 } from '../../config/featureFlags';
 import { Logo } from './Logo';
+import { NotificationBell } from './NotificationBell';
 import { useCartStore } from '../../stores/cartStore';
 import { useAuthStore } from '../../stores/authStore';
 
@@ -19,6 +30,14 @@ const navItems = [
   { to: '/doctors', label: 'Doctors' },
   { to: '/departments', label: 'Departments' },
   { to: '/contact', label: 'Contact' },
+];
+
+// Extra tabs surfaced to logged-in patients so they can jump straight to
+// "what's happening with my booking" + "are my reports ready" without
+// going through the user-menu dropdown.
+const patientNavItems = [
+  { to: '/dashboard/bookings', label: 'My Bookings', icon: CalendarCheck },
+  { to: '/dashboard/reports', label: 'My Reports', icon: FileText },
 ];
 
 export function Header() {
@@ -86,6 +105,25 @@ export function Header() {
             </NavLink>
           ))}
 
+          {user?.role === 'patient' &&
+            patientNavItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  cn(
+                    'inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-primary hover:bg-primary/10',
+                  )
+                }
+              >
+                <item.icon className="h-4 w-4" />
+                {item.label}
+              </NavLink>
+            ))}
+
           {PHASE_2_ENABLED && (
             <>
               <button
@@ -109,6 +147,8 @@ export function Header() {
                   </span>
                 )}
               </Link>
+
+              {user && <NotificationBell className="ml-1" />}
 
               {user ? (
                 <div className="relative">
@@ -223,6 +263,25 @@ export function Header() {
                 {item.label}
               </NavLink>
             ))}
+            {user?.role === 'patient' &&
+              patientNavItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  onClick={() => setMobileOpen(false)}
+                  className={({ isActive }) =>
+                    cn(
+                      'inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium',
+                      isActive
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-primary hover:bg-primary/10',
+                    )
+                  }
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </NavLink>
+              ))}
             {PHASE_2_ENABLED && (
               <>
                 <button

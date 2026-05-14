@@ -6,7 +6,13 @@ import { Input } from '../../components/ui/input';
 import { Badge } from '../../components/ui/badge';
 import { Skeleton } from '../../components/ui/skeleton';
 import { DataTable, type Column } from '../../components/admin/DataTable';
-import { useAdminBookings, type AdminBookingRow } from '../../hooks/queries';
+import {
+  useAdminBookings,
+  useClearTabBadges,
+  type AdminBookingRow,
+} from '../../hooks/queries';
+
+const BOOKINGS_BADGE_EVENTS = ['proof_submitted'] as const;
 import { BookingStatusSelect } from '../../components/admin/BookingStatusSelect';
 import { BookingOriginPill } from '../../components/shared/BookingOriginPill';
 import { formatCurrencyINR } from '../../lib/utils';
@@ -18,6 +24,11 @@ export default function AdminBookingsPage() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterOrigin, setFilterOrigin] = useState<'all' | 'online' | 'walk_in'>('all');
   const [filterVisit, setFilterVisit] = useState<'all' | 'in_clinic' | 'home_visit'>('all');
+
+  // Clear the sidebar NEW badge whenever a new patient submission lands on
+  // this page. Same event as Payment re-verify, since a fresh booking row is
+  // also "new info on the Bookings tab".
+  useClearTabBadges(BOOKINGS_BADGE_EVENTS);
 
   const { data: bookings = [], isLoading } = useAdminBookings({
     type: filterType === 'all' ? undefined : filterType,
