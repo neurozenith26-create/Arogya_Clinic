@@ -4,7 +4,16 @@ import { Helmet } from 'react-helmet-async';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { format } from 'date-fns';
-import { ArrowLeft, ArrowRight, Home, Building, CheckCircle2, AlertCircle } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Home,
+  Building,
+  CheckCircle2,
+  AlertCircle,
+  Building2,
+} from 'lucide-react';
+import { usePublicBranches } from '../../hooks/useBranches';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
@@ -57,6 +66,15 @@ export default function BookTestPage() {
   const clearCart = useCartStore((s) => s.clear);
   const preferredVisitType = useCartStore((s) => s.preferredVisitType);
   const user = useAuthStore((s) => s.user);
+  // Multi-branch: Step 0 — patient picks which Arogya branch they're booking
+  // with. Defaults to undefined so the picker has to be explicit. The whole
+  // wizard is gated until a branch is chosen.
+  const { data: branches = [], isLoading: branchesLoading } = usePublicBranches();
+  const [selectedBranchId, setSelectedBranchId] = useState<number | undefined>();
+  const selectedBranch = useMemo(
+    () => branches.find((b) => b.id === selectedBranchId),
+    [branches, selectedBranchId],
+  );
   const [step, setStep] = useState(1);
   // Honour the "Book Home Visit" CTA preference from cartStore — set by the
   // header / dashboard sidebar buttons before the patient lands here.
@@ -135,7 +153,9 @@ export default function BookTestPage() {
     }
     setCheckingPincode(true);
     try {
-      const result = await checkServiceablePincode(p);
+      // Scope the check to the chosen branch so a Mumbai patient doesn't see
+      // a Kolkata-only pincode count as serviceable.
+      const result = await checkServiceablePincode(p, selectedBranchId);
       setPincodeResult(result);
     } catch (err) {
       setPincodeError(getApiErrorMessage(err, 'Could not check this pincode'));
@@ -189,6 +209,7 @@ export default function BookTestPage() {
           delivery_address: address,
           home_visit_charge: Number(homeVisitCharge) || 0,
           special_instructions: instructions || undefined,
+          branch_id: selectedBranchId,
         },
         proof,
         upi_reference: upiReference,
@@ -215,6 +236,80 @@ export default function BookTestPage() {
     );
   }
 
+  // Step 0 — Branch picker. Until a branch is selected, the wizard stays
+  // hidden. Single branch in the system → auto-select to avoid a one-card
+  // dead-end for tiny deployments.
+  if (!selectedBranchId) {
+    if (branches.length === 1 && !branchesLoading) {
+      // Defer the auto-select to the next tick so React doesn't re-render
+      // mid-render. Calling setState inside the render body is illegal.
+      queueMicrotask(() => setSelectedBranchId(branches[0].id));
+    }
+    return (
+      <>
+        <Helmet>
+          <title>Choose a branch — {CLINIC_FULL_NAME}</title>
+        </Helmet>
+        <section className="container py-6">
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/cart">
+              <ArrowLeft className="mr-1 h-4 w-4" /> Back to cart
+            </Link>
+          </Button>
+        </section>
+        <section className="container pb-12">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-primary" />
+                Choose a branch
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Pick the Arogya clinic you want to book with. You can use a different branch
+                next time.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {branchesLoading ? (
+                <p className="text-sm text-muted-foreground">Loading branches…</p>
+              ) : branches.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No branches are currently available.
+                </p>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {branches.map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => setSelectedBranchId(b.id)}
+                      className="rounded-lg border border-border bg-card p-4 text-left transition-all hover:border-primary hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      <div className="flex items-start gap-3">
+                        <Building2 className="mt-0.5 h-5 w-5 text-primary" />
+                        <div className="flex-1">
+                          <div className="font-semibold">{b.name}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {b.address_line1}
+                            {b.address_line2 ? `, ${b.address_line2}` : ''} · {b.city},{' '}
+                            {b.state} {b.pincode}
+                          </div>
+                          <div className="mt-1.5 text-xs">
+                            <span className="font-medium text-foreground">{b.phone}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      </>
+    );
+  }
+
   return (
     <>
       <Helmet>
@@ -230,6 +325,28 @@ export default function BookTestPage() {
       </section>
 
       <section className="container pb-12">
+        {selectedBranch && (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+            <Building2 className="h-4 w-4 text-primary" />
+            <span className="font-medium">{selectedBranch.name}</span>
+            <span className="text-xs text-muted-foreground">
+              · {selectedBranch.city}, {selectedBranch.pincode}
+            </span>
+            {branches.length > 1 && (
+              <button
+                type="button"
+                className="ml-auto text-xs font-medium text-primary hover:underline"
+                onClick={() => {
+                  setSelectedBranchId(undefined);
+                  setStep(1);
+                  setPincodeResult(null);
+                }}
+              >
+                Change branch
+              </button>
+            )}
+          </div>
+        )}
         <div className="mb-8">
           <WizardSteps steps={stepLabels} currentStep={step} />
         </div>

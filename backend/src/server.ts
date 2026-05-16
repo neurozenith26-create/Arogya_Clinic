@@ -11,6 +11,7 @@ import { generalLimiter } from './middleware/rateLimit.js';
 import publicRoutes from './modules/public/publicRoutes.js';
 import authRoutes from './modules/auth/authRoutes.js';
 import phase2Routes from './modules/phase2/phase2Routes.js';
+import branchAdminsRoutes from './modules/phase2/branchAdminsRoutes.js';
 import uploadRoutes from './modules/uploads/uploadRoutes.js';
 import invoiceRoutes from './modules/invoices/invoiceRoutes.js';
 
@@ -55,6 +56,8 @@ app.use('/api/v1', authRoutes);
 app.use('/api/v1', publicRoutes);
 // Phase 2: bookings, slots, payments, admin
 app.use('/api/v1', phase2Routes);
+// Multi-branch: public branches list + super-admin branch+admin CRUD
+app.use('/api/v1', branchAdminsRoutes);
 // File uploads + downloads
 app.use('/api/v1', uploadRoutes);
 // Invoice PDF generation

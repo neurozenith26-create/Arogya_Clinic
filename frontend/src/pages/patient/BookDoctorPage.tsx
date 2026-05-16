@@ -1,10 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { format } from 'date-fns';
-import { ArrowLeft, ArrowRight, BadgeCheck, Clock, MapPin, Star } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  BadgeCheck,
+  Clock,
+  MapPin,
+  Star,
+  Building2,
+} from 'lucide-react';
+import { usePublicBranches } from '../../hooks/useBranches';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
@@ -34,6 +43,14 @@ export default function BookDoctorPage() {
   const navigate = useNavigate();
   const { data: doctor, isLoading } = useDoctor(doctorId);
   const user = useAuthStore((s) => s.user);
+  const { data: branches = [], isLoading: branchesLoading } = usePublicBranches();
+  // Multi-branch: patient picks which clinic this appointment is for. Required
+  // before the wizard renders.
+  const [selectedBranchId, setSelectedBranchId] = useState<number | undefined>();
+  const selectedBranch = useMemo(
+    () => branches.find((b) => b.id === selectedBranchId),
+    [branches, selectedBranchId],
+  );
   const [step, setStep] = useState(1);
 
   const [selectedDate, setSelectedDate] = useState(format(new Date(Date.now() + 86400000), 'yyyy-MM-dd'));
@@ -122,6 +139,7 @@ export default function BookDoctorPage() {
           scheduled_start_time: selectedSlot,
           patient_snapshot: { ...values, email: values.email || undefined },
           reason_for_visit: reason || undefined,
+          branch_id: selectedBranchId,
         },
         proof,
         upi_reference: upiReference,
@@ -168,6 +186,76 @@ export default function BookDoctorPage() {
           <Link to={`/doctors/${doctor.id}`}>Back to doctor profile</Link>
         </Button>
       </div>
+    );
+  }
+
+  // Step 0 — Branch picker. Until a branch is chosen, the wizard stays hidden.
+  // Auto-select on single-branch deployments.
+  if (!selectedBranchId) {
+    if (branches.length === 1 && !branchesLoading) {
+      queueMicrotask(() => setSelectedBranchId(branches[0].id));
+    }
+    return (
+      <>
+        <Helmet>
+          <title>Choose a branch — {CLINIC_FULL_NAME}</title>
+        </Helmet>
+        <section className="container py-6">
+          <Button asChild variant="ghost" size="sm">
+            <Link to={`/doctors/${doctor.id}`}>
+              <ArrowLeft className="mr-1 h-4 w-4" /> Doctor profile
+            </Link>
+          </Button>
+        </section>
+        <section className="container pb-12">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-primary" />
+                Choose a branch
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Pick the Arogya clinic where you want to see {doctor.display_name}.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {branchesLoading ? (
+                <p className="text-sm text-muted-foreground">Loading branches…</p>
+              ) : branches.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No branches are currently available.
+                </p>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {branches.map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => setSelectedBranchId(b.id)}
+                      className="rounded-lg border border-border bg-card p-4 text-left transition-all hover:border-primary hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      <div className="flex items-start gap-3">
+                        <Building2 className="mt-0.5 h-5 w-5 text-primary" />
+                        <div className="flex-1">
+                          <div className="font-semibold">{b.name}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {b.address_line1}
+                            {b.address_line2 ? `, ${b.address_line2}` : ''} · {b.city},{' '}
+                            {b.state} {b.pincode}
+                          </div>
+                          <div className="mt-1.5 text-xs">
+                            <span className="font-medium text-foreground">{b.phone}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      </>
     );
   }
 
@@ -218,6 +306,28 @@ export default function BookDoctorPage() {
           </CardContent>
         </Card>
 
+        {selectedBranch && (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+            <Building2 className="h-4 w-4 text-primary" />
+            <span className="font-medium">{selectedBranch.name}</span>
+            <span className="text-xs text-muted-foreground">
+              · {selectedBranch.city}, {selectedBranch.pincode}
+            </span>
+            {branches.length > 1 && (
+              <button
+                type="button"
+                className="ml-auto text-xs font-medium text-primary hover:underline"
+                onClick={() => {
+                  setSelectedBranchId(undefined);
+                  setStep(1);
+                  setSelectedSlot(undefined);
+                }}
+              >
+                Change branch
+              </button>
+            )}
+          </div>
+        )}
         <div className="mb-8">
           <WizardSteps steps={stepLabels} currentStep={step} />
         </div>

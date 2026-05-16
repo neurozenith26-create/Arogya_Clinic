@@ -11,6 +11,7 @@ import {
   type MockDoctor,
   type MockService,
 } from '../lib/mockData';
+import { useSelectedBranchId, branchFilterParam } from '../stores/branchFilterStore';
 
 /**
  * Centralised query keys — used for cache invalidation.
@@ -349,8 +350,11 @@ export interface AdminBookingDetail extends AdminBookingRow {
 }
 
 export function useAdminBookings(filters?: AdminBookingFilters) {
+  const selectedBranch = useSelectedBranchId();
+  const branchId = branchFilterParam(selectedBranch);
   return useQuery({
-    queryKey: qk.adminBookings(filters),
+    // Cache per-branch so switching the dropdown doesn't show stale rows
+    queryKey: [...qk.adminBookings(filters), 'branch', branchId ?? 'all'],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filters?.type) params.set('type', filters.type);
@@ -358,6 +362,7 @@ export function useAdminBookings(filters?: AdminBookingFilters) {
       if (filters?.visit_type) params.set('visit_type', filters.visit_type);
       if (filters?.status) params.set('status', filters.status);
       if (filters?.q) params.set('q', filters.q);
+      if (branchId !== undefined) params.set('branch_id', String(branchId));
       const { data } = await api.get<{ data: AdminBookingRow[] }>(
         `/admin/bookings${params.toString() ? `?${params}` : ''}`,
       );
@@ -447,11 +452,14 @@ export interface PincodeInput {
 }
 
 export function useAdminPincodes() {
+  const selectedBranch = useSelectedBranchId();
+  const branchId = branchFilterParam(selectedBranch);
   return useQuery({
-    queryKey: ['admin', 'pincodes'],
+    queryKey: ['admin', 'pincodes', branchId ?? 'all'],
     queryFn: async () => {
+      const qs = branchId !== undefined ? `?branch_id=${branchId}` : '';
       const { data } = await api.get<{ data: AdminPincodeRow[] }>(
-        '/admin/serviceable-pincodes',
+        `/admin/serviceable-pincodes${qs}`,
       );
       return data.data;
     },
@@ -519,6 +527,15 @@ export interface DashboardScheduleRow {
   items_summary: string | null;
 }
 
+export interface DashboardBranchComparisonRow {
+  branch_id: number;
+  branch_name: string;
+  branch_code: string;
+  today_bookings: number;
+  today_revenue: number;
+  pending_reports: number;
+}
+
 export interface DashboardPayload {
   today: string;
   kpis: {
@@ -530,17 +547,33 @@ export interface DashboardPayload {
     new_patients_week: number;
   };
   schedule: DashboardScheduleRow[];
+  /**
+   * Only populated for super_admin's "All branches" view. Each row is one
+   * active branch with today's KPIs. Used for the comparison widget.
+   */
+  branches_comparison?: DashboardBranchComparisonRow[];
 }
 
 export function useAdminDashboard() {
+  const selectedBranch = useSelectedBranchId();
+  const branchId = branchFilterParam(selectedBranch);
   return useQuery({
-    queryKey: ['admin', 'dashboard'],
+    queryKey: ['admin', 'dashboard', branchId ?? 'all'],
     queryFn: async () => {
-      const { data } = await api.get<{ data: DashboardPayload }>('/admin/dashboard');
+      const qs = branchId !== undefined ? `?branch_id=${branchId}` : '';
+      const { data } = await api.get<{ data: DashboardPayload }>(`/admin/dashboard${qs}`);
       return data.data;
     },
     refetchInterval: 60_000, // keep the dashboard reasonably fresh
   });
+}
+
+export interface AnalyticsRevenueByBranchRow {
+  branch_id: number;
+  branch_name: string;
+  branch_code: string;
+  bookings_count: number;
+  revenue: number;
 }
 
 export interface AnalyticsPayload {
@@ -560,14 +593,20 @@ export interface AnalyticsPayload {
   by_origin: Array<{ key: string; count: number; revenue: number }>;
   by_status: Array<{ key: string; count: number }>;
   by_payment_method: Array<{ key: string; count: number; amount: number }>;
+  /** Super-admin "All branches" view: per-branch revenue rollup. Empty otherwise. */
+  revenue_by_branch: AnalyticsRevenueByBranchRow[];
 }
 
 export function useAdminAnalytics(days: number) {
+  const selectedBranch = useSelectedBranchId();
+  const branchId = branchFilterParam(selectedBranch);
   return useQuery({
-    queryKey: ['admin', 'analytics', days],
+    queryKey: ['admin', 'analytics', days, branchId ?? 'all'],
     queryFn: async () => {
+      const params = new URLSearchParams({ days: String(days) });
+      if (branchId !== undefined) params.set('branch_id', String(branchId));
       const { data } = await api.get<{ data: AnalyticsPayload }>(
-        `/admin/analytics?days=${days}`,
+        `/admin/analytics?${params}`,
       );
       return data.data;
     },
@@ -1373,10 +1412,15 @@ export interface PincodeCheckResult {
  * `serviceable: false` for non-Indian-format pincodes OR pincodes that don't
  * appear in the active `serviceable_pincodes` list — never throws.
  */
-export async function checkServiceablePincode(pincode: string): Promise<PincodeCheckResult> {
+export async function checkServiceablePincode(
+  pincode: string,
+  branchId?: number,
+): Promise<PincodeCheckResult> {
   const trimmed = pincode.trim();
+  const qs = new URLSearchParams({ pincode: trimmed });
+  if (branchId !== undefined) qs.set('branch_id', String(branchId));
   const { data } = await api.get<{ data: PincodeCheckResult }>(
-    `/serviceable-pincodes/check?pincode=${encodeURIComponent(trimmed)}`,
+    `/serviceable-pincodes/check?${qs.toString()}`,
   );
   return data.data;
 }
@@ -1439,6 +1483,8 @@ export interface DoctorAppointmentBookingInput {
   scheduled_start_time: string;
   patient_snapshot: Record<string, unknown>;
   reason_for_visit?: string;
+  /** Branch the patient is booking at. Optional — backend defaults to Main Branch. */
+  branch_id?: number;
 }
 
 export interface BookingCreatedResponse {
@@ -1494,6 +1540,8 @@ export interface TestBookingInput {
   delivery_address?: Record<string, unknown>;
   home_visit_charge?: number;
   special_instructions?: string;
+  /** Branch the patient is booking at. Optional — backend defaults to Main Branch. */
+  branch_id?: number;
 }
 
 export function useCreateTestBooking() {

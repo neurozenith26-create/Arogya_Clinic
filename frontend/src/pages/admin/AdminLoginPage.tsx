@@ -25,6 +25,12 @@ export default function AdminLoginPage() {
     setError(null);
   };
 
+  const fillSuperAdmin = () => {
+    setEmail(DEMO_CREDENTIALS.SUPER_ADMIN_EMAIL);
+    setPassword(DEMO_CREDENTIALS.PASSWORD);
+    setError(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -62,19 +68,39 @@ export default function AdminLoginPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="mb-4 rounded-md border border-secondary/40 bg-accent p-3 text-xs">
-              <div className="font-semibold text-accent-foreground">Demo admin account</div>
-              <div className="mt-1 text-accent-foreground/90">
-                <span className="font-mono">{DEMO_CREDENTIALS.ADMIN_EMAIL}</span> /{' '}
-                <span className="font-mono">{DEMO_CREDENTIALS.PASSWORD}</span>
+            <div className="mb-4 space-y-2 rounded-md border border-secondary/40 bg-accent p-3 text-xs">
+              <div>
+                <div className="font-semibold text-accent-foreground">
+                  Branch admin (Main Branch)
+                </div>
+                <div className="mt-1 text-accent-foreground/90">
+                  <span className="font-mono">{DEMO_CREDENTIALS.ADMIN_EMAIL}</span> /{' '}
+                  <span className="font-mono">{DEMO_CREDENTIALS.PASSWORD}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={fillDemo}
+                  className="mt-1 text-xs font-semibold text-primary hover:underline"
+                >
+                  Auto-fill branch admin
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={fillDemo}
-                className="mt-2 text-xs font-semibold text-primary hover:underline"
-              >
-                Auto-fill demo admin
-              </button>
+              <div className="border-t border-secondary/40 pt-2">
+                <div className="font-semibold text-accent-foreground">
+                  Super admin (master — view-only across all branches)
+                </div>
+                <div className="mt-1 text-accent-foreground/90">
+                  <span className="font-mono">{DEMO_CREDENTIALS.SUPER_ADMIN_EMAIL}</span> /{' '}
+                  <span className="font-mono">{DEMO_CREDENTIALS.PASSWORD}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={fillSuperAdmin}
+                  className="mt-1 text-xs font-semibold text-primary hover:underline"
+                >
+                  Auto-fill super admin
+                </button>
+              </div>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">

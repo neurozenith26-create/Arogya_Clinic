@@ -2,11 +2,31 @@ import { Router, type Router as ExpressRouter } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { query, transaction } from '../../db/pool.js';
-import { requireAuth, requireRole } from '../../middleware/auth.js';
+import {
+  requireAuth,
+  requireRole,
+  scopedBranchFilter,
+  enforceBranchAdminWrite,
+} from '../../middleware/auth.js';
 import { HttpError } from '../../middleware/errorHandler.js';
 import { notify } from '../../lib/notify.js';
 
 const router: ExpressRouter = Router();
+
+// ─── Global super-admin write gate ────────────────────────────────────────
+// Super admin is view-only across all branch data. The only write surface
+// allowed is /admin/branch-admins/* (handled in branchAdminsRoutes.ts, a
+// separate router). For every other /admin/* write here, run requireAuth so
+// req.user is populated, then reject if super_admin.
+router.use('/admin', (req, res, next) => {
+  if (!['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
+    return next();
+  }
+  requireAuth(req, res, (err: unknown) => {
+    if (err) return next(err);
+    enforceBranchAdminWrite(req, res, next);
+  });
+});
 
 // ─── Payment-proof uploads (multipart for /bookings/{test,doctor-appointment}) ──
 const PROOF_MAX_SIZE = 5 * 1024 * 1024; // 5 MB
@@ -64,13 +84,23 @@ const pincodeCreateSchema = z.object({
 });
 const pincodeUpdateSchema = pincodeCreateSchema.partial();
 
-router.get('/admin/serviceable-pincodes', requireAuth, requireRole('admin', 'super_admin'), async (_req, res, next) => {
+router.get('/admin/serviceable-pincodes', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
   try {
+    const branchFilter = scopedBranchFilter(req);
+    const wheres: string[] = [];
+    const params: unknown[] = [];
+    if (branchFilter !== null) {
+      params.push(branchFilter);
+      wheres.push(`branch_id = $${params.length}`);
+    }
+    const whereSql = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
     const result = await query(
       `SELECT id, pincode, city, state, zone, home_visit_charge,
-              collection_lead_time_hours, is_active, created_at, updated_at
+              collection_lead_time_hours, is_active, branch_id, created_at, updated_at
        FROM serviceable_pincodes
+       ${whereSql}
        ORDER BY pincode`,
+      params,
     );
     res.json({ data: result.rows });
   } catch (err) {
@@ -94,10 +124,13 @@ router.post('/admin/serviceable-pincodes', requireAuth, requireRole('admin', 'su
         'DUPLICATE_PINCODE',
       );
     }
+    // Branch admin: pincode belongs to their branch. Super admin reaches
+    // the gate (enforceBranchAdminWrite) and never gets here.
+    const branchId = req.user?.branch_id ?? 1;
     const result = await query<{ id: number }>(
       `INSERT INTO serviceable_pincodes
-         (pincode, city, state, zone, home_visit_charge, collection_lead_time_hours, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE))
+         (pincode, city, state, zone, home_visit_charge, collection_lead_time_hours, is_active, branch_id)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE), $8)
        RETURNING id`,
       [
         data.pincode,
@@ -107,6 +140,7 @@ router.post('/admin/serviceable-pincodes', requireAuth, requireRole('admin', 'su
         data.home_visit_charge,
         data.collection_lead_time_hours,
         data.is_active ?? null,
+        branchId,
       ],
     );
     res.status(201).json({ data: { id: result.rows[0].id } });
@@ -166,11 +200,26 @@ router.get('/serviceable-pincodes/check', async (req, res, next) => {
       res.json({ data: { serviceable: false, pincode } });
       return;
     }
+    // Optional ?branch_id — if the patient picked a branch (Step 0 of booking),
+    // restrict the check to that branch's serviceable area. If omitted, any
+    // branch's pincode counts as serviceable (backward-compat for older clients).
+    const branchIdRaw = req.query.branch_id;
+    const branchId =
+      branchIdRaw !== undefined && branchIdRaw !== '' && !Number.isNaN(Number(branchIdRaw))
+        ? Number(branchIdRaw)
+        : null;
+    const params: unknown[] = [pincode];
+    let where = 'WHERE pincode = $1 AND is_active = TRUE';
+    if (branchId !== null) {
+      params.push(branchId);
+      where += ` AND branch_id = $${params.length}`;
+    }
     const result = await query(
-      `SELECT pincode, city, state, zone, home_visit_charge, collection_lead_time_hours
+      `SELECT pincode, city, state, zone, home_visit_charge, collection_lead_time_hours, branch_id
        FROM serviceable_pincodes
-       WHERE pincode = $1 AND is_active = TRUE`,
-      [pincode],
+       ${where}
+       LIMIT 1`,
+      params,
     );
     if (result.rows.length === 0) {
       res.json({ data: { serviceable: false, pincode } });
@@ -366,6 +415,9 @@ const doctorBookingSchema = z.object({
   patient_snapshot: z.record(z.unknown()),
   reason_for_visit: z.string().optional(),
   upi_reference: z.string().max(100).optional(),
+  // Multi-branch: which clinic the patient is booking at. Optional with a
+  // default of 1 (Main Branch) so a not-yet-updated frontend keeps working.
+  branch_id: z.coerce.number().int().positive().optional(),
 });
 
 /**
@@ -446,12 +498,14 @@ router.post(
             scheduled_date, scheduled_start_time,
             patient_snapshot,
             subtotal_amount, total_amount, advance_amount, balance_amount,
-            booking_status, payment_status, reason_for_visit, created_by_user_id
+            booking_status, payment_status, reason_for_visit, created_by_user_id,
+            branch_id
           ) VALUES (
             $1, 'doctor_appointment', 'online', $2,
             $3, $4, $5, $6, $7,
             $8, $8, $9, $10,
-            'in_progress', $11, $12, $1
+            'in_progress', $11, $12, $1,
+            $13
           ) RETURNING id, booking_code`,
           [
             req.user!.id,
@@ -466,6 +520,7 @@ router.post(
             balance,
             paymentStatus,
             data.reason_for_visit ?? null,
+            data.branch_id ?? 1,
           ],
         );
 
@@ -554,6 +609,9 @@ const testBookingSchema = z.object({
   home_visit_charge: z.coerce.number().nonnegative().default(0),
   special_instructions: z.string().optional(),
   upi_reference: z.string().max(100).optional(),
+  // Multi-branch: which clinic the patient is booking at. Optional with a
+  // default of 1 (Main Branch) so a not-yet-updated frontend keeps working.
+  branch_id: z.coerce.number().int().positive().optional(),
 });
 
 router.post(
@@ -609,13 +667,15 @@ router.post(
             patient_snapshot, delivery_address,
             subtotal_amount, home_visit_charge, total_amount, advance_amount, balance_amount,
             booking_status, payment_status, special_instructions,
-            collection_status, created_by_user_id
+            collection_status, created_by_user_id,
+            branch_id
           ) VALUES (
             $1, 'test_booking', 'online', $2,
             $3, $4, $5, $6,
             $7, $8, $9, $10, $11,
             'in_progress', $12, $13,
-            $14, $1
+            $14, $1,
+            $15
           ) RETURNING id, booking_code`,
           [
             req.user!.id,
@@ -632,6 +692,7 @@ router.post(
             paymentStatus,
             data.special_instructions ?? null,
             data.visit_type === 'home_visit' ? 'not_assigned' : 'not_required',
+            data.branch_id ?? 1,
           ],
         );
 
@@ -1834,6 +1895,13 @@ router.get('/admin/bookings', requireAuth, requireRole('admin', 'super_admin'), 
 
     const wheres: string[] = [];
     const params: unknown[] = [];
+    // Multi-branch scope: branch admins always see only their own branch;
+    // super admin sees all unless ?branch_id=N is provided.
+    const branchFilter = scopedBranchFilter(req);
+    if (branchFilter !== null) {
+      params.push(branchFilter);
+      wheres.push(`branch_id = $${params.length}`);
+    }
     if (filters.type) {
       params.push(filters.type);
       wheres.push(`booking_type = $${params.length}`);
@@ -1881,7 +1949,7 @@ router.get('/admin/bookings', requireAuth, requireRole('admin', 'super_admin'), 
 
 router.get('/admin/bookings/:id', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
   try {
-    const bookingRes = await query(
+    const bookingRes = await query<{ branch_id: number }>(
       `SELECT b.*,
               (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = b.doctor_user_id) AS doctor_name,
               (SELECT speciality FROM users WHERE id = b.doctor_user_id) AS doctor_speciality,
@@ -1890,6 +1958,12 @@ router.get('/admin/bookings/:id', requireAuth, requireRole('admin', 'super_admin
       [req.params.id],
     );
     if (bookingRes.rows.length === 0) {
+      throw new HttpError(404, 'Booking not found', 'NOT_FOUND');
+    }
+    // Branch admins can only see their own branch's bookings (404 — never
+    // leak the existence of cross-branch data).
+    const branchFilter = scopedBranchFilter(req);
+    if (branchFilter !== null && bookingRes.rows[0].branch_id !== branchFilter) {
       throw new HttpError(404, 'Booking not found', 'NOT_FOUND');
     }
     const items = await query(
@@ -1929,7 +2003,7 @@ router.get('/admin/bookings/:id', requireAuth, requireRole('admin', 'super_admin
 
 // ─── Admin: dashboard + analytics aggregations ────────────────────────────
 
-router.get('/admin/dashboard', requireAuth, requireRole('admin', 'super_admin'), async (_req, res, next) => {
+router.get('/admin/dashboard', requireAuth, requireRole('admin', 'super_admin'), async (req, res, next) => {
   try {
     // Today and yesterday in Asia/Kolkata so the "today" boundary matches what
     // the receptionist actually sees on the wall clock. We compute dates in JS
@@ -1942,9 +2016,15 @@ router.get('/admin/dashboard', requireAuth, requireRole('admin', 'super_admin'),
     const yesterday = fmtDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
     const weekAgo = fmtDate(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
 
-    // KPI counts + revenue. Revenue is summed from captured/authorized payments
-    // (source of truth) — booking.advance_amount can be stale before the
-    // recompute trigger fires on offline payments, so payments table wins.
+    // Branch scope: branch admin always pinned to own branch; super admin
+    // honours ?branch_id=N or aggregates across all branches.
+    const branchFilter = scopedBranchFilter(req);
+    const bFilterSql = branchFilter !== null ? 'AND branch_id = $4' : '';
+    const bJoinSql =
+      branchFilter !== null ? 'AND b.branch_id = $4' : '';
+    const params: unknown[] = [today, yesterday, weekAgo];
+    if (branchFilter !== null) params.push(branchFilter);
+
     const kpiRes = await query<{
       today_bookings: number;
       today_revenue: string;
@@ -1954,27 +2034,36 @@ router.get('/admin/dashboard', requireAuth, requireRole('admin', 'super_admin'),
       new_patients_week: number;
     }>(
       `SELECT
-         (SELECT COUNT(*)::int FROM bookings WHERE scheduled_date = $1) AS today_bookings,
+         (SELECT COUNT(*)::int FROM bookings WHERE scheduled_date = $1 ${bFilterSql}) AS today_bookings,
          (SELECT COALESCE(SUM(p.amount - p.refunded_amount), 0)::numeric FROM payments p
             JOIN bookings b ON b.id = p.booking_id
             WHERE b.scheduled_date = $1
-              AND p.payment_status IN ('captured', 'authorized')) AS today_revenue,
-         (SELECT COUNT(*)::int FROM bookings WHERE scheduled_date = $2) AS yesterday_bookings,
+              AND p.payment_status IN ('captured', 'authorized')
+              ${bJoinSql}) AS today_revenue,
+         (SELECT COUNT(*)::int FROM bookings WHERE scheduled_date = $2 ${bFilterSql}) AS yesterday_bookings,
          (SELECT COALESCE(SUM(p.amount - p.refunded_amount), 0)::numeric FROM payments p
             JOIN bookings b ON b.id = p.booking_id
             WHERE b.scheduled_date = $2
-              AND p.payment_status IN ('captured', 'authorized')) AS yesterday_revenue,
+              AND p.payment_status IN ('captured', 'authorized')
+              ${bJoinSql}) AS yesterday_revenue,
          (SELECT COUNT(*)::int FROM bookings b
             WHERE b.booking_type = 'test_booking'
               AND b.booking_status IN ('in_progress', 'completed')
-              AND NOT EXISTS (SELECT 1 FROM reports r WHERE r.booking_id = b.id AND r.is_active = TRUE)) AS pending_reports,
+              AND NOT EXISTS (SELECT 1 FROM reports r WHERE r.booking_id = b.id AND r.is_active = TRUE)
+              ${bJoinSql}) AS pending_reports,
          (SELECT COUNT(*)::int FROM users
             WHERE role = 'patient' AND created_at >= $3::date) AS new_patients_week`,
-      [today, yesterday, weekAgo],
+      params,
     );
     const kpi = kpiRes.rows[0];
 
     // Today's schedule (first 10 rows) — includes both online + walk-in.
+    const scheduleParams: unknown[] = [today];
+    let scheduleWhere = 'WHERE b.scheduled_date = $1';
+    if (branchFilter !== null) {
+      scheduleParams.push(branchFilter);
+      scheduleWhere += ` AND b.branch_id = $${scheduleParams.length}`;
+    }
     const scheduleRes = await query(
       `SELECT b.id, b.booking_code, b.booking_type, b.booking_origin, b.visit_type,
               b.scheduled_start_time, b.booking_status, b.payment_status,
@@ -1982,11 +2071,57 @@ router.get('/admin/dashboard', requireAuth, requireRole('admin', 'super_admin'),
               (SELECT first_name || ' ' || COALESCE(last_name,'') FROM users WHERE id = b.doctor_user_id) AS doctor_name,
               (SELECT string_agg(item_name, ', ' ORDER BY id) FROM booking_items WHERE booking_id = b.id) AS items_summary
        FROM bookings b
-       WHERE b.scheduled_date = $1
+       ${scheduleWhere}
        ORDER BY b.scheduled_start_time NULLS LAST, b.created_at
        LIMIT 10`,
-      [today],
+      scheduleParams,
     );
+
+    // Per-branch comparison (super_admin "All branches" view only). For
+    // branch admin or a specific-branch super_admin view, we skip this to
+    // keep the response shape lean.
+    let branches_comparison: Array<{
+      branch_id: number;
+      branch_name: string;
+      branch_code: string;
+      today_bookings: number;
+      today_revenue: number;
+      pending_reports: number;
+    }> | undefined;
+    if (req.user?.role === 'super_admin' && branchFilter === null) {
+      const compRes = await query<{
+        branch_id: number;
+        branch_name: string;
+        branch_code: string;
+        today_bookings: number;
+        today_revenue: string;
+        pending_reports: number;
+      }>(
+        `SELECT br.id AS branch_id, br.name AS branch_name, br.branch_code,
+                (SELECT COUNT(*)::int FROM bookings WHERE branch_id = br.id AND scheduled_date = $1) AS today_bookings,
+                (SELECT COALESCE(SUM(p.amount - p.refunded_amount), 0)::numeric
+                   FROM payments p JOIN bookings b ON b.id = p.booking_id
+                  WHERE b.branch_id = br.id AND b.scheduled_date = $1
+                    AND p.payment_status IN ('captured', 'authorized')) AS today_revenue,
+                (SELECT COUNT(*)::int FROM bookings b
+                   WHERE b.branch_id = br.id
+                     AND b.booking_type = 'test_booking'
+                     AND b.booking_status IN ('in_progress', 'completed')
+                     AND NOT EXISTS (SELECT 1 FROM reports r WHERE r.booking_id = b.id AND r.is_active = TRUE)) AS pending_reports
+           FROM branches br
+          WHERE br.is_active = TRUE
+          ORDER BY br.id`,
+        [today],
+      );
+      branches_comparison = compRes.rows.map((r) => ({
+        branch_id: r.branch_id,
+        branch_name: r.branch_name,
+        branch_code: r.branch_code,
+        today_bookings: r.today_bookings,
+        today_revenue: Number(r.today_revenue),
+        pending_reports: r.pending_reports,
+      }));
+    }
 
     res.json({
       data: {
@@ -2000,6 +2135,7 @@ router.get('/admin/dashboard', requireAuth, requireRole('admin', 'super_admin'),
           new_patients_week: kpi.new_patients_week,
         },
         schedule: scheduleRes.rows,
+        branches_comparison,
       },
     });
   } catch (err) {
@@ -2019,98 +2155,145 @@ router.get('/admin/analytics', requireAuth, requireRole('admin', 'super_admin'),
     const to = fmtDate(now);
     const from = fmtDate(new Date(now.getTime() - (days - 1) * 24 * 60 * 60 * 1000));
 
+    // Multi-branch scope. Branch admin → pinned to own branch. Super admin →
+    // honours ?branch_id=N or aggregates across branches. When aggregating,
+    // we also emit a `revenue_by_branch` array for the bar + pie charts.
+    const branchFilter = scopedBranchFilter(req);
+    const bFilter = branchFilter !== null ? 'AND branch_id = $3' : '';
+    const bJoinFilter = branchFilter !== null ? 'AND b.branch_id = $3' : '';
+    const baseParams: unknown[] = [from, to];
+    if (branchFilter !== null) baseParams.push(branchFilter);
+
     // Single round-trip: parallelize all aggregations.
-    const [kpiRes, trendRes, topRes, byTypeRes, byOriginRes, byStatusRes, byMethodRes] =
-      await Promise.all([
-        query<{
-          bookings_count: number;
-          revenue: string;
-          online_count: number;
-          walk_in_count: number;
-          home_visits_count: number;
-          in_clinic_count: number;
-          new_patients_count: number;
-        }>(
-          `SELECT
-             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2) AS bookings_count,
+    const [
+      kpiRes,
+      trendRes,
+      topRes,
+      byTypeRes,
+      byOriginRes,
+      byStatusRes,
+      byMethodRes,
+      byBranchRes,
+    ] = await Promise.all([
+      query<{
+        bookings_count: number;
+        revenue: string;
+        online_count: number;
+        walk_in_count: number;
+        home_visits_count: number;
+        in_clinic_count: number;
+        new_patients_count: number;
+      }>(
+        `SELECT
+             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 ${bFilter}) AS bookings_count,
              (SELECT COALESCE(SUM(p.amount - p.refunded_amount), 0)::numeric FROM payments p
                 JOIN bookings b ON b.id = p.booking_id
                 WHERE b.created_at::date BETWEEN $1 AND $2
-                  AND p.payment_status IN ('captured', 'authorized')) AS revenue,
-             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND booking_origin = 'online') AS online_count,
-             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND booking_origin = 'walk_in') AS walk_in_count,
-             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND visit_type = 'home_visit') AS home_visits_count,
-             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND visit_type = 'in_clinic') AS in_clinic_count,
+                  AND p.payment_status IN ('captured', 'authorized')
+                  ${bJoinFilter}) AS revenue,
+             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND booking_origin = 'online' ${bFilter}) AS online_count,
+             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND booking_origin = 'walk_in' ${bFilter}) AS walk_in_count,
+             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND visit_type = 'home_visit' ${bFilter}) AS home_visits_count,
+             (SELECT COUNT(*)::int FROM bookings WHERE created_at::date BETWEEN $1 AND $2 AND visit_type = 'in_clinic' ${bFilter}) AS in_clinic_count,
              (SELECT COUNT(*)::int FROM users WHERE role = 'patient' AND created_at::date BETWEEN $1 AND $2) AS new_patients_count`,
-          [from, to],
-        ),
-        // Daily revenue + booking count for the trend line/bar chart.
-        // generate_series gives us a row per day even when there are no bookings,
-        // so the chart has no gaps.
-        query<{ d: string; revenue: string; bookings: number }>(
-          `SELECT g.d::text AS d,
+        baseParams,
+      ),
+      query<{ d: string; revenue: string; bookings: number }>(
+        `SELECT g.d::text AS d,
                   COALESCE(SUM(CASE WHEN p.payment_status IN ('captured','authorized')
                                     THEN p.amount - p.refunded_amount ELSE 0 END), 0)::numeric AS revenue,
                   COUNT(DISTINCT b.id)::int AS bookings
            FROM generate_series($1::date, $2::date, '1 day'::interval) AS g(d)
-           LEFT JOIN bookings b ON b.created_at::date = g.d
+           LEFT JOIN bookings b ON b.created_at::date = g.d ${bJoinFilter}
            LEFT JOIN payments p ON p.booking_id = b.id
            GROUP BY g.d
            ORDER BY g.d`,
-          [from, to],
-        ),
-        // Top services by booking volume (with revenue).
-        query<{ item_name: string; count: number; revenue: string }>(
-          `SELECT bi.item_name,
+        baseParams,
+      ),
+      query<{ item_name: string; count: number; revenue: string }>(
+        `SELECT bi.item_name,
                   COUNT(*)::int AS count,
                   COALESCE(SUM(bi.total_price), 0)::numeric AS revenue
            FROM booking_items bi
            JOIN bookings b ON b.id = bi.booking_id
-           WHERE b.created_at::date BETWEEN $1 AND $2
+           WHERE b.created_at::date BETWEEN $1 AND $2 ${bJoinFilter}
            GROUP BY bi.item_name
            ORDER BY count DESC, revenue DESC
            LIMIT 10`,
-          [from, to],
-        ),
-        query<{ booking_type: string; count: number; revenue: string }>(
-          `SELECT b.booking_type,
+        baseParams,
+      ),
+      query<{ booking_type: string; count: number; revenue: string }>(
+        `SELECT b.booking_type,
                   COUNT(*)::int AS count,
                   COALESCE(SUM(b.total_amount), 0)::numeric AS revenue
            FROM bookings b
-           WHERE b.created_at::date BETWEEN $1 AND $2
+           WHERE b.created_at::date BETWEEN $1 AND $2 ${bJoinFilter}
            GROUP BY b.booking_type`,
-          [from, to],
-        ),
-        query<{ booking_origin: string; count: number; revenue: string }>(
-          `SELECT b.booking_origin,
+        baseParams,
+      ),
+      query<{ booking_origin: string; count: number; revenue: string }>(
+        `SELECT b.booking_origin,
                   COUNT(*)::int AS count,
                   COALESCE(SUM(b.total_amount), 0)::numeric AS revenue
            FROM bookings b
-           WHERE b.created_at::date BETWEEN $1 AND $2
+           WHERE b.created_at::date BETWEEN $1 AND $2 ${bJoinFilter}
            GROUP BY b.booking_origin`,
-          [from, to],
-        ),
-        query<{ booking_status: string; count: number }>(
-          `SELECT booking_status, COUNT(*)::int AS count
+        baseParams,
+      ),
+      query<{ booking_status: string; count: number }>(
+        `SELECT booking_status, COUNT(*)::int AS count
            FROM bookings
-           WHERE created_at::date BETWEEN $1 AND $2
+           WHERE created_at::date BETWEEN $1 AND $2 ${bFilter}
            GROUP BY booking_status
            ORDER BY count DESC`,
-          [from, to],
-        ),
-        query<{ payment_method: string | null; count: number; amount: string }>(
-          `SELECT p.payment_method,
+        baseParams,
+      ),
+      query<{ payment_method: string | null; count: number; amount: string }>(
+        `SELECT p.payment_method,
                   COUNT(*)::int AS count,
                   COALESCE(SUM(p.amount - p.refunded_amount), 0)::numeric AS amount
            FROM payments p
            JOIN bookings b ON b.id = p.booking_id
            WHERE b.created_at::date BETWEEN $1 AND $2
              AND p.payment_status IN ('captured', 'authorized')
+             ${bJoinFilter}
            GROUP BY p.payment_method
            ORDER BY amount DESC`,
-          [from, to],
-        ),
-      ]);
+        baseParams,
+      ),
+      // Per-branch revenue rollup for the super-admin bar + pie charts.
+      // Only meaningful in the aggregated "All branches" view; if a specific
+      // branch is selected, this collapses to a single row.
+      req.user?.role === 'super_admin' && branchFilter === null
+        ? query<{
+            branch_id: number;
+            branch_name: string;
+            branch_code: string;
+            bookings_count: number;
+            revenue: string;
+          }>(
+            `SELECT br.id AS branch_id, br.name AS branch_name, br.branch_code,
+                    COUNT(DISTINCT b.id)::int AS bookings_count,
+                    COALESCE(SUM(CASE WHEN p.payment_status IN ('captured','authorized')
+                                      THEN p.amount - p.refunded_amount ELSE 0 END), 0)::numeric AS revenue
+               FROM branches br
+               LEFT JOIN bookings b
+                      ON b.branch_id = br.id
+                     AND b.created_at::date BETWEEN $1 AND $2
+               LEFT JOIN payments p ON p.booking_id = b.id
+              WHERE br.is_active = TRUE
+              GROUP BY br.id, br.name, br.branch_code
+              ORDER BY revenue DESC`,
+            [from, to],
+          )
+        : Promise.resolve({ rows: [] as Array<{
+            branch_id: number;
+            branch_name: string;
+            branch_code: string;
+            bookings_count: number;
+            revenue: string;
+          }> }),
+    ]);
 
     const kpi = kpiRes.rows[0];
     res.json({
@@ -2150,6 +2333,16 @@ router.get('/admin/analytics', requireAuth, requireRole('admin', 'super_admin'),
           key: r.payment_method ?? 'unknown',
           count: r.count,
           amount: Number(r.amount),
+        })),
+        // For the super-admin "All branches" view: branch-wise revenue for
+        // bar + pie charts. Empty array otherwise (the response shape stays
+        // stable for the existing AdminAnalyticsPage which ignores it).
+        revenue_by_branch: byBranchRes.rows.map((r) => ({
+          branch_id: r.branch_id,
+          branch_name: r.branch_name,
+          branch_code: r.branch_code,
+          bookings_count: r.bookings_count,
+          revenue: Number(r.revenue),
         })),
       },
     });
@@ -2501,7 +2694,9 @@ router.post(
         const paymentStatus = paid <= 0 ? 'pending' : paid >= total ? 'paid' : 'partial';
         const bookingStatus = paid >= total ? 'completed' : 'in_progress';
 
-        // 1. bookings
+        // 1. bookings — branch is the staff's own branch (walk-in always
+        // happens at the branch the staff is logged in for).
+        const branchId = req.user?.branch_id ?? 1;
         const bookingRes = await client.query<{ id: number; booking_code: string }>(
           `INSERT INTO bookings (
              patient_user_id, booking_type, booking_origin, visit_type,
@@ -2509,13 +2704,13 @@ router.post(
              patient_snapshot,
              subtotal_amount, total_amount, advance_amount, balance_amount,
              booking_status, payment_status, collection_status,
-             created_by_user_id
+             created_by_user_id, branch_id
            ) VALUES (
              $1, 'test_booking', 'walk_in', 'in_clinic',
              $2, $3, $4,
              $5, $5, $6, $7,
              $8, $9, 'not_required',
-             $10
+             $10, $11
            ) RETURNING id, booking_code`,
           [
             data.patient_user_id ?? null,
@@ -2528,6 +2723,7 @@ router.post(
             bookingStatus,
             paymentStatus,
             req.user!.id,
+            branchId,
           ],
         );
         const booking = bookingRes.rows[0];

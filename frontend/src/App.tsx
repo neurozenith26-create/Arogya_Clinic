@@ -62,6 +62,7 @@ const AdminPaymentVerificationsPage = lazy(
 );
 const AdminCollectorsPage = lazy(() => import('./pages/admin/AdminCollectorsPage'));
 const AdminPincodesPage = lazy(() => import('./pages/admin/AdminPincodesPage'));
+const AdminBranchAdminsPage = lazy(() => import('./pages/admin/AdminBranchAdminsPage'));
 const WalkInBillPage = lazy(() => import('./pages/admin/WalkInBillPage'));
 const HomeCollectionBoardPage = lazy(() => import('./pages/admin/HomeCollectionBoardPage'));
 
@@ -171,6 +172,7 @@ export default function App() {
               />
               <Route path="/admin/departments" element={<AdminDepartmentsPage />} />
               <Route path="/admin/pincodes" element={<AdminPincodesPage />} />
+              <Route path="/admin/branch-admins" element={<AdminBranchAdminsPage />} />
               <Route path="/admin/reports" element={<AdminReportsPage />} />
               <Route path="/admin/invoices" element={<AdminInvoicesPage />} />
               <Route path="/admin/payments" element={<AdminPaymentsPage />} />

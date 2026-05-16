@@ -7,6 +7,13 @@ export interface JwtPayload {
   role: 'patient' | 'doctor' | 'admin' | 'super_admin';
   email?: string | null;
   mobile?: string | null;
+  /**
+   * For branch admins (role='admin'): the branch they manage.
+   * NULL/undefined for super_admin (sees all), patient, doctor.
+   * The middleware ultimately re-reads this from the DB on every request,
+   * so a token claim cannot escalate access — this field is informational.
+   */
+  branch_id?: number | null;
 }
 
 /**

@@ -47,6 +47,30 @@ export interface User {
   admin_role?: string | null;
   permissions?: Record<string, unknown> | null;
 
+  // Multi-branch: non-null only for role='admin' (branch admin).
+  // NULL for super_admin (sees all), patient, doctor.
+  branch_id?: number | null;
+
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Branch {
+  id: number;
+  branch_code: string;
+  name: string;
+  address_line1: string;
+  address_line2: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  phone: string;
+  email: string | null;
+  gstin: string | null;
+  upi_id: string | null;
+  upi_payee_name: string | null;
+  business_hours: Record<string, unknown> | null;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -119,6 +143,7 @@ export interface DoctorCenter {
   schedule: WeeklySchedule | null;
   home_visit_schedule: WeeklySchedule | null;
   is_active: boolean;
+  branch_id: number | null;
 }
 
 export interface DailyScheduleSlot {
@@ -174,6 +199,7 @@ export interface Booking {
   cancelled_at: string | null;
   cancellation_reason: string | null;
   completed_at: string | null;
+  branch_id: number;
   created_at: string;
   updated_at: string;
 }
@@ -200,6 +226,7 @@ export interface ServiceablePincode {
   home_visit_charge: number;
   collection_lead_time_hours: number;
   is_active: boolean;
+  branch_id: number | null;
 }
 
 export interface Report {

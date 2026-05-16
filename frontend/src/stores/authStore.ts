@@ -11,11 +11,22 @@ export interface AuthUser {
   mobile: string | null;
   first_name: string;
   last_name: string;
+  /**
+   * Multi-branch: non-null only for role='admin' (branch admin pinned to a branch).
+   * NULL for super_admin (sees all branches), patient, doctor.
+   */
+  branch_id: number | null;
 }
 
 interface ApiAuthResponse {
   token: string;
-  user: { id: string; role: AuthUser['role']; email: string | null; mobile: string | null };
+  user: {
+    id: string;
+    role: AuthUser['role'];
+    email: string | null;
+    mobile: string | null;
+    branch_id?: number | null;
+  };
 }
 
 interface AuthResult {
@@ -52,14 +63,17 @@ interface AuthState {
 
 /**
  * Demo credentials baked into mock mode (and into the database seed for live).
- *   admin@gmail.com   / 123  → super_admin
- *   patient@gmail.com / 123  → patient
+ *   admin@gmail.com       / 123  → role='admin' (branch admin of Main Branch, id=1)
+ *   superadmin@gmail.com  / 123  → role='super_admin' (multi-branch view + branch admin CRUD)
+ *   patient@gmail.com     / 123  → role='patient'
  *
- * In mock mode (VITE_USE_MOCK_DATA=true) these match locally without any HTTP.
- * In live mode they match the rows inserted by supabase/seed/05_super_admin.sql.
+ * After the multi-branch migration (0028) admin@gmail.com is a *branch admin*,
+ * not the super admin. Master super admin uses a new email. Both mock mode and
+ * the live DB seeds agree on these mappings.
  */
 export const DEMO_CREDENTIALS = {
   ADMIN_EMAIL: 'admin@gmail.com',
+  SUPER_ADMIN_EMAIL: 'superadmin@gmail.com',
   PATIENT_EMAIL: 'patient@gmail.com',
   PASSWORD: '123',
 } as const;
@@ -73,8 +87,21 @@ function buildMockUser(email: string, role: AuthUser['role']): AuthUser {
       mobile: '9999900000',
       first_name: 'Demo',
       last_name: 'Patient',
+      branch_id: null,
     };
   }
+  if (role === 'super_admin') {
+    return {
+      id: 'master-demo',
+      role,
+      email,
+      mobile: '+919999988888',
+      first_name: 'Master',
+      last_name: 'Admin',
+      branch_id: null,
+    };
+  }
+  // admin (branch admin of Main Branch)
   return {
     id: 'admin-demo',
     role,
@@ -82,6 +109,7 @@ function buildMockUser(email: string, role: AuthUser['role']): AuthUser {
     mobile: '+919831990734',
     first_name: 'Arogya',
     last_name: 'Admin',
+    branch_id: 1,
   };
 }
 
@@ -108,6 +136,12 @@ export const useAuthStore = create<AuthState>()(
             return { ok: false, error: 'Invalid credentials' };
           }
           if (e === DEMO_CREDENTIALS.ADMIN_EMAIL) {
+            // Post-migration: admin@gmail.com is the Main Branch admin, not super admin.
+            const user = buildMockUser(e, 'admin');
+            set({ user });
+            return { ok: true, user };
+          }
+          if (e === DEMO_CREDENTIALS.SUPER_ADMIN_EMAIL) {
             const user = buildMockUser(e, 'super_admin');
             set({ user });
             return { ok: true, user };
@@ -168,6 +202,7 @@ export const useAuthStore = create<AuthState>()(
             mobile,
             first_name: firstName ?? 'Demo',
             last_name: 'Patient',
+            branch_id: null,
           };
           set({ user });
           return { ok: true, user };
@@ -195,6 +230,7 @@ export const useAuthStore = create<AuthState>()(
             mobile: input.mobile,
             first_name: input.first_name,
             last_name: input.last_name,
+            branch_id: null,
           };
           set({ user });
           return { ok: true, user };
@@ -220,6 +256,7 @@ export const useAuthStore = create<AuthState>()(
               mobile: string | null;
               first_name: string | null;
               last_name: string | null;
+              branch_id: number | null;
             };
           }>('/auth/me');
           set({
@@ -230,6 +267,7 @@ export const useAuthStore = create<AuthState>()(
               mobile: data.data.mobile,
               first_name: data.data.first_name ?? '',
               last_name: data.data.last_name ?? '',
+              branch_id: data.data.branch_id ?? null,
             },
           });
         } catch {

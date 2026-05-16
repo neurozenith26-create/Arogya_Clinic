@@ -47,21 +47,34 @@ router.post('/auth/signup', async (req, res, next) => {
       role: 'patient';
       email: string | null;
       mobile: string;
+      branch_id: number | null;
     }>(
       `INSERT INTO users
          (role, first_name, last_name, mobile, email, password_hash, is_login_enabled)
        VALUES ('patient', $1, $2, $3, $4, $5, TRUE)
-       RETURNING id, role, email, mobile`,
+       RETURNING id, role, email, mobile, branch_id`,
       [data.first_name, data.last_name, data.mobile, data.email ?? null, password_hash],
     );
 
     const user = result.rows[0];
-    const token = signJwt({ sub: user.id, role: user.role, email: user.email, mobile: user.mobile });
+    const token = signJwt({
+      sub: user.id,
+      role: user.role,
+      email: user.email,
+      mobile: user.mobile,
+      branch_id: user.branch_id,
+    });
 
     res.status(201).json({
       data: {
         token,
-        user: { id: user.id, role: user.role, email: user.email, mobile: user.mobile },
+        user: {
+          id: user.id,
+          role: user.role,
+          email: user.email,
+          mobile: user.mobile,
+          branch_id: user.branch_id,
+        },
       },
     });
   } catch (err) {
@@ -87,8 +100,9 @@ router.post('/auth/login', async (req, res, next) => {
       password_hash: string | null;
       is_active: boolean;
       is_login_enabled: boolean;
+      branch_id: number | null;
     }>(
-      `SELECT id, role, email, mobile, password_hash, is_active, is_login_enabled
+      `SELECT id, role, email, mobile, password_hash, is_active, is_login_enabled, branch_id
        FROM users WHERE email = $1`,
       [data.email.toLowerCase()],
     );
@@ -109,11 +123,23 @@ router.post('/auth/login', async (req, res, next) => {
     await query('UPDATE users SET last_login_at = NOW(), failed_login_count = 0 WHERE id = $1', [
       user.id,
     ]);
-    const token = signJwt({ sub: user.id, role: user.role, email: user.email, mobile: user.mobile });
+    const token = signJwt({
+      sub: user.id,
+      role: user.role,
+      email: user.email,
+      mobile: user.mobile,
+      branch_id: user.branch_id,
+    });
     res.json({
       data: {
         token,
-        user: { id: user.id, role: user.role, email: user.email, mobile: user.mobile },
+        user: {
+          id: user.id,
+          role: user.role,
+          email: user.email,
+          mobile: user.mobile,
+          branch_id: user.branch_id,
+        },
       },
     });
   } catch (err) {
@@ -164,14 +190,18 @@ router.post('/auth/otp/verify', async (req, res, next) => {
       email: string | null;
       mobile: string | null;
       is_active: boolean;
-    }>(`SELECT id, role, email, mobile, is_active FROM users WHERE mobile = $1`, [data.mobile]);
+      branch_id: number | null;
+    }>(
+      `SELECT id, role, email, mobile, is_active, branch_id FROM users WHERE mobile = $1`,
+      [data.mobile],
+    );
 
     if (userRes.rows.length === 0) {
       // First-time login via OTP — auto-create a patient account
       userRes = await query(
         `INSERT INTO users (role, first_name, last_name, mobile, is_login_enabled)
          VALUES ('patient', $1, $2, $3, TRUE)
-         RETURNING id, role, email, mobile, is_active`,
+         RETURNING id, role, email, mobile, is_active, branch_id`,
         [data.first_name ?? 'Patient', data.last_name ?? '', data.mobile],
       );
     }
@@ -181,11 +211,23 @@ router.post('/auth/otp/verify', async (req, res, next) => {
       throw new HttpError(403, 'Account is disabled', 'ACCOUNT_DISABLED');
     }
     await query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
-    const token = signJwt({ sub: user.id, role: user.role, email: user.email, mobile: user.mobile });
+    const token = signJwt({
+      sub: user.id,
+      role: user.role,
+      email: user.email,
+      mobile: user.mobile,
+      branch_id: user.branch_id,
+    });
     res.json({
       data: {
         token,
-        user: { id: user.id, role: user.role, email: user.email, mobile: user.mobile },
+        user: {
+          id: user.id,
+          role: user.role,
+          email: user.email,
+          mobile: user.mobile,
+          branch_id: user.branch_id,
+        },
       },
     });
   } catch (err) {
@@ -201,7 +243,7 @@ router.get('/auth/me', requireAuth, async (req, res, next) => {
       `SELECT id, role, email, mobile, first_name, last_name, is_active, is_login_enabled,
               date_of_birth, gender, default_address, alternative_number,
               speciality, qualifications, consultation_fee, about,
-              admin_role, permissions, created_at, updated_at
+              admin_role, permissions, branch_id, created_at, updated_at
        FROM users WHERE id = $1`,
       [req.user!.id],
     );

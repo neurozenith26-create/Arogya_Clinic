@@ -8,6 +8,7 @@ import {
   TrendingDown,
   AlertCircle,
   Minus,
+  Building2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
@@ -15,6 +16,8 @@ import { Button } from '../../components/ui/button';
 import { Skeleton } from '../../components/ui/skeleton';
 import { useAdminDashboard, type DashboardScheduleRow } from '../../hooks/queries';
 import { formatCurrencyINR } from '../../lib/utils';
+import { WriteAction } from '../../components/admin/WriteAction';
+import { useReadOnlyAdmin } from '../../components/admin/ReadOnlyAdminContext';
 
 function pctChange(curr: number, prev: number): { label: string; dir: 'up' | 'down' | 'flat' } {
   if (prev === 0 && curr === 0) return { label: 'No change', dir: 'flat' };
@@ -66,9 +69,10 @@ export default function AdminDashboardPage() {
     );
   }
 
-  const { kpis, schedule, today } = data;
+  const { kpis, schedule, today, branches_comparison } = data;
   const bookingsTrend = pctChange(kpis.today_bookings, kpis.yesterday_bookings);
   const revenueTrend = pctChange(kpis.today_revenue, kpis.yesterday_revenue);
+  const isReadOnly = useReadOnlyAdmin();
 
   return (
     <div className="space-y-6">
@@ -155,7 +159,59 @@ export default function AdminDashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      {branches_comparison && branches_comparison.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center gap-2">
+            <Building2 className="h-5 w-5 text-primary" />
+            <CardTitle>Branches comparison — today</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b bg-muted/40">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider">
+                      Branch
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider">
+                      Today bookings
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider">
+                      Today revenue
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider">
+                      Pending reports
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {branches_comparison.map((b) => (
+                    <tr key={b.branch_id} className="border-b last:border-b-0 hover:bg-accent/30">
+                      <td className="px-3 py-2">
+                        <div className="font-medium">{b.branch_name}</div>
+                        <div className="text-xs text-muted-foreground">{b.branch_code}</div>
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{b.today_bookings}</td>
+                      <td className="px-3 py-2 text-right font-semibold tabular-nums">
+                        {formatCurrencyINR(b.today_revenue)}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {b.pending_reports > 0 ? (
+                          <Badge variant="destructive">{b.pending_reports}</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">0</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className={isReadOnly ? '' : 'grid gap-6 lg:grid-cols-2'}>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Today&apos;s schedule</CardTitle>
@@ -174,45 +230,47 @@ export default function AdminDashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick actions</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-3">
-            <Button asChild variant="outline" className="h-auto justify-start py-3">
-              <Link to="/admin/walk-in-bills/new">
-                <div className="text-left">
-                  <div className="font-medium">Walk-in Bill</div>
-                  <div className="text-xs text-muted-foreground">For in-person patients</div>
-                </div>
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="h-auto justify-start py-3">
-              <Link to="/admin/doctors/new">
-                <div className="text-left">
-                  <div className="font-medium">Add Doctor</div>
-                  <div className="text-xs text-muted-foreground">New specialist</div>
-                </div>
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="h-auto justify-start py-3">
-              <Link to="/admin/services">
-                <div className="text-left">
-                  <div className="font-medium">Manage Tests</div>
-                  <div className="text-xs text-muted-foreground">Catalog &amp; pricing</div>
-                </div>
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="h-auto justify-start py-3">
-              <Link to="/admin/reports">
-                <div className="text-left">
-                  <div className="font-medium">Upload Reports</div>
-                  <div className="text-xs text-muted-foreground">PDFs &amp; images</div>
-                </div>
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <WriteAction>
+          <Card>
+            <CardHeader>
+              <CardTitle>Quick actions</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-3">
+              <Button asChild variant="outline" className="h-auto justify-start py-3">
+                <Link to="/admin/walk-in-bills/new">
+                  <div className="text-left">
+                    <div className="font-medium">Walk-in Bill</div>
+                    <div className="text-xs text-muted-foreground">For in-person patients</div>
+                  </div>
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="h-auto justify-start py-3">
+                <Link to="/admin/doctors/new">
+                  <div className="text-left">
+                    <div className="font-medium">Add Doctor</div>
+                    <div className="text-xs text-muted-foreground">New specialist</div>
+                  </div>
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="h-auto justify-start py-3">
+                <Link to="/admin/services">
+                  <div className="text-left">
+                    <div className="font-medium">Manage Tests</div>
+                    <div className="text-xs text-muted-foreground">Catalog &amp; pricing</div>
+                  </div>
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="h-auto justify-start py-3">
+                <Link to="/admin/reports">
+                  <div className="text-left">
+                    <div className="font-medium">Upload Reports</div>
+                    <div className="text-xs text-muted-foreground">PDFs &amp; images</div>
+                  </div>
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </WriteAction>
       </div>
     </div>
   );

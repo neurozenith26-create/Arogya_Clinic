@@ -114,8 +114,16 @@ export default function AdminAnalyticsPage() {
 }
 
 function AnalyticsBody({ data }: { data: AnalyticsPayload }) {
-  const { kpis, revenue_trend, top_services, by_type, by_origin, by_status, by_payment_method } =
-    data;
+  const {
+    kpis,
+    revenue_trend,
+    top_services,
+    by_type,
+    by_origin,
+    by_status,
+    by_payment_method,
+    revenue_by_branch,
+  } = data;
   const totalBookings = kpis.bookings_count;
   const onlinePct =
     totalBookings > 0 ? Math.round((kpis.online_count / totalBookings) * 100) : 0;
@@ -176,6 +184,121 @@ function AnalyticsBody({ data }: { data: AnalyticsPayload }) {
           sub={`${homeVisitPct}% of bookings`}
         />
       </div>
+
+      {/* Super-admin "All branches" view: branch-wise revenue bar + pie.
+          Branch admin and per-branch super_admin view never get this array,
+          so the section renders nothing for them. */}
+      {revenue_by_branch && revenue_by_branch.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Revenue by branch</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Captured payments per branch over the selected period. Each branch's slice
+              of the pie is its share of total revenue; the bars compare raw amounts.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={revenue_by_branch.map((b) => ({
+                      name: b.branch_name,
+                      revenue: b.revenue,
+                      bookings: b.bookings_count,
+                    }))}
+                    margin={{ top: 5, right: 16, left: 8, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(v: string) => (v.length > 14 ? `${v.slice(0, 13)}…` : v)}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(v) => `₹${(Number(v) / 1000).toFixed(0)}k`}
+                    />
+                    <Tooltip
+                      formatter={(value, _name, props) => [
+                        `${formatCurrencyINR(Number(value))} · ${props.payload.bookings} bookings`,
+                        props.payload.name,
+                      ]}
+                    />
+                    <Bar dataKey="revenue" fill="#10b981" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={revenue_by_branch.map((b) => ({
+                        name: b.branch_name,
+                        value: b.revenue,
+                      }))}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={90}
+                      label={(entry) => `${entry.name}`}
+                      labelLine={false}
+                      isAnimationActive
+                    >
+                      {revenue_by_branch.map((_, i) => (
+                        <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v) => formatCurrencyINR(Number(v ?? 0))} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            {/* Tabular fallback / share table */}
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b bg-muted/40">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider">
+                      Branch
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider">
+                      Bookings
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider">
+                      Revenue
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider">
+                      Share
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {revenue_by_branch.map((b) => {
+                    const totalRev = revenue_by_branch.reduce((s, r) => s + r.revenue, 0);
+                    const share = totalRev > 0 ? Math.round((b.revenue / totalRev) * 100) : 0;
+                    return (
+                      <tr key={b.branch_id} className="border-b last:border-b-0">
+                        <td className="px-3 py-2">
+                          <div className="font-medium">{b.branch_name}</div>
+                          <div className="text-xs text-muted-foreground">{b.branch_code}</div>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{b.bookings_count}</td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums">
+                          {formatCurrencyINR(b.revenue)}
+                        </td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">{share}%</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Revenue trend (composed: bars for bookings, line for revenue) */}
       <Card>
@@ -434,6 +557,13 @@ function downloadAnalyticsCsv(data: AnalyticsPayload) {
   lines.push('');
   lines.push('Payment method,Count,Amount (INR)');
   data.by_payment_method.forEach((r) => lines.push(`${r.key},${r.count},${r.amount}`));
+  if (data.revenue_by_branch && data.revenue_by_branch.length > 0) {
+    lines.push('');
+    lines.push('Branch,Branch code,Bookings,Revenue (INR)');
+    data.revenue_by_branch.forEach((r) =>
+      lines.push(`"${r.branch_name.replace(/"/g, '""')}",${r.branch_code},${r.bookings_count},${r.revenue}`),
+    );
+  }
 
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);

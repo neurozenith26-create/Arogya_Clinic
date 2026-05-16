@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Mail, MapPin, Phone, MessageCircle, CheckCircle2 } from 'lucide-react';
+import { Mail, MapPin, Phone, MessageCircle, CheckCircle2, Building2 } from 'lucide-react';
 import { enquirySchema, type EnquiryInput } from '@arogya/shared/schemas/enquiry';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -10,6 +10,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Label } from '../../components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { useSubmitEnquiry } from '../../hooks/queries';
+import { usePublicBranches } from '../../hooks/useBranches';
 import {
   CLINIC_FULL_NAME,
   CLINIC_ADDRESS,
@@ -22,6 +23,9 @@ import {
 export default function ContactPage() {
   const [submitted, setSubmitted] = useState(false);
   const submitMutation = useSubmitEnquiry();
+  // Multi-branch: list every active branch with its address & phone. Falls
+  // back to the single hardcoded CLINIC_ADDRESS card if the API is unreachable.
+  const { data: branches = [] } = usePublicBranches();
 
   const form = useForm<EnquiryInput>({
     resolver: zodResolver(enquirySchema),
@@ -110,15 +114,50 @@ export default function ContactPage() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardContent className="flex items-start gap-3 p-5">
-                <MapPin className="mt-0.5 h-5 w-5 text-primary" />
-                <div>
-                  <div className="text-sm font-semibold">Address</div>
-                  <p className="text-sm text-muted-foreground">{CLINIC_ADDRESS}</p>
-                </div>
-              </CardContent>
-            </Card>
+            {branches.length > 0 ? (
+              branches.map((b) => (
+                <Card key={b.id}>
+                  <CardContent className="flex items-start gap-3 p-5">
+                    <Building2 className="mt-0.5 h-5 w-5 text-primary" />
+                    <div>
+                      <div className="text-sm font-semibold">{b.name}</div>
+                      <p className="mt-0.5 text-sm text-muted-foreground">
+                        {b.address_line1}
+                        {b.address_line2 ? `, ${b.address_line2}` : ''}
+                        <br />
+                        {b.city}, {b.state} {b.pincode}
+                      </p>
+                      <div className="mt-1.5 flex items-center gap-3 text-xs">
+                        <a
+                          href={`tel:${b.phone.replace(/[^0-9+]/g, '')}`}
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {b.phone}
+                        </a>
+                        {b.email && (
+                          <a
+                            href={`mailto:${b.email}`}
+                            className="font-medium text-primary hover:underline"
+                          >
+                            {b.email}
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            ) : (
+              <Card>
+                <CardContent className="flex items-start gap-3 p-5">
+                  <MapPin className="mt-0.5 h-5 w-5 text-primary" />
+                  <div>
+                    <div className="text-sm font-semibold">Address</div>
+                    <p className="text-sm text-muted-foreground">{CLINIC_ADDRESS}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Right: enquiry form */}

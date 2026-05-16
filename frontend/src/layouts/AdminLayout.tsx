@@ -24,6 +24,7 @@ import {
   ReceiptText,
   Menu,
   X,
+  Network,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuthStore } from '../stores/authStore';
@@ -34,6 +35,8 @@ import {
   useMyNotifications,
   usePendingReVerifyPayments,
 } from '../hooks/queries';
+import { ReadOnlyAdminProvider } from '../components/admin/ReadOnlyAdminContext';
+import { BranchFilterDropdown } from '../components/admin/BranchFilterDropdown';
 
 // Feedback is intentionally hidden from the sidebar. The page and route
 // still exist (see App.tsx) — visit /admin/feedback directly to reach it.
@@ -53,6 +56,16 @@ type NavItem = {
   badgeEvents?: readonly string[];
 };
 type NavGroup = { label: string; items: NavItem[] };
+
+// Super-admin-only section, prepended dynamically inside the component so a
+// branch admin never sees it. We define it here at module scope to keep the
+// JSX simple.
+const SUPER_ADMIN_NAV_GROUP: NavGroup = {
+  label: 'Organization',
+  items: [
+    { to: '/admin/branch-admins', label: 'Branch Admins', icon: Network },
+  ],
+};
 
 const navGroups: NavGroup[] = [
   {
@@ -128,6 +141,11 @@ export function AdminLayout() {
     pendingReVerify: pendingReVerify.length,
   };
 
+  // Super admin sees an extra "Organization" group at the top with the
+  // single "Branch Admins" entry (create branch + admin in one form).
+  const visibleNavGroups: NavGroup[] =
+    user?.role === 'super_admin' ? [SUPER_ADMIN_NAV_GROUP, ...navGroups] : navGroups;
+
   useEffect(() => {
     setMobileOpen(false);
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -173,7 +191,7 @@ export function AdminLayout() {
           </div>
 
           <nav className="flex-1 space-y-4 overflow-y-auto p-3">
-            {navGroups.map((group) => (
+            {visibleNavGroups.map((group) => (
               <div key={group.label}>
                 <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   {group.label}
@@ -259,6 +277,9 @@ export function AdminLayout() {
               </button>
             </div>
           </div>
+          <div className="flex justify-end border-t px-4 py-1.5">
+            <BranchFilterDropdown />
+          </div>
         </header>
         {/* Desktop top bar — sticky bell so admin can see new patient
             submissions without scrolling back up. Also exposes a quick
@@ -266,6 +287,7 @@ export function AdminLayout() {
             without logging out. */}
         <header className="sticky top-0 z-30 hidden border-b bg-background/90 backdrop-blur lg:block">
           <div className="flex h-12 items-center justify-end gap-3 px-6">
+            <BranchFilterDropdown />
             <Link
               to="/"
               className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -279,7 +301,9 @@ export function AdminLayout() {
           </div>
         </header>
         <main className="animate-fade-in p-4 sm:p-6 lg:p-8">
-          <Outlet />
+          <ReadOnlyAdminProvider>
+            <Outlet />
+          </ReadOnlyAdminProvider>
         </main>
       </div>
     </div>
