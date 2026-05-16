@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Arogya Diagnostics &mdash; Multi-Branch (Phase 2) Handoff</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #0b1220;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent-2: #34d399;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --good: #4ade80;
+    --code-bg: #0b1220;
+    --code-fg: #e2e8f0;
+    --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    background: linear-gradient(135deg, #0ea5e9 0%, #10b981 100%);
+    padding: 36px 32px;
+    color: white;
+  }
+  header h1 { margin: 0 0 6px 0; font-size: 28px; }
+  header .sub { opacity: 0.92; font-size: 14px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 24px 80px; }
+  h2 {
+    margin: 32px 0 12px;
+    color: var(--accent);
+    font-size: 20px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { margin: 20px 0 8px; color: var(--accent-2); font-size: 16px; }
+  h4 { margin: 16px 0 6px; color: #cbd5e1; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; }
+  p, li { font-size: 14px; }
+  ul, ol { padding-left: 22px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin: 12px 0;
+  }
+  .panel.warn { border-color: var(--warn); background: #2a1f00; }
+  .panel.bad  { border-color: var(--bad);  background: #2a0f0f; }
+  .panel.good { border-color: var(--good); background: #0a2a14; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .pill.done   { background: #052e16; color: var(--good); border: 1px solid var(--good); }
+  .pill.todo   { background: #2e1605; color: var(--warn); border: 1px solid var(--warn); }
+  .pill.never  { background: #2e0505; color: var(--bad);  border: 1px solid var(--bad); }
+  code, pre {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    color: var(--code-fg);
+  }
+  code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; }
+  pre {
+    background: var(--code-bg);
+    padding: 12px 14px;
+    border-radius: 6px;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    margin: 8px 0;
+    white-space: pre;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 13px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  tr:hover td { background: rgba(56, 189, 248, 0.04); }
+  .kv td:first-child { color: var(--muted); width: 260px; }
+  .kbd {
+    display: inline-block;
+    background: #0b1220;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+  .check { color: var(--good); font-weight: 700; }
+  .cross { color: var(--bad);  font-weight: 700; }
+  .toc {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    columns: 2;
+    column-gap: 24px;
+  }
+  .toc a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .toc a:hover { text-decoration: underline; }
+  .footer { color: var(--muted); font-size: 12px; margin-top: 40px; text-align: center; }
+  .ascii {
+    background: var(--code-bg);
+    padding: 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } .toc { columns: 1; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Arogya Diagnostics &mdash; Multi-Branch (Phase 2) Handoff</h1>
+  <div class="sub">Drop this file into a future Claude session and it has every fact, file path, command, and credential it needs to ship Phase 2 safely.</div>
+</header>
+
+<main>
+
+<section class="panel">
+  <h3 style="margin-top:0">For the next Claude session: read this first</h3>
+  <p>The multi-branch (multi-clinic) feature was <strong>fully built and committed</strong> on git branch <code>multiple_branch_feature_added_phase2</code>. The DB migration <code>0028_branches.sql</code> was <strong>already applied</strong> to the live Supabase database in a backward-compatible way. The currently deployed code on <code>main</code> is still Phase 1 (single-clinic) and the client cannot see the new feature.</p>
+  <p><strong>What's left for Phase 2 ship day:</strong> merge <code>multiple_branch_feature_added_phase2</code> into <code>main</code>, redeploy, and run <code>pnpm db:seed</code> once. <em>No second migration is needed.</em></p>
+</section>
+
+<h2 id="toc">Table of contents</h2>
+<div class="toc">
+  <a href="#summary">1. TL;DR summary &amp; status grid</a><br />
+  <a href="#intent">2. The client's intent</a><br />
+  <a href="#current">3. Current state (DB &amp; git)</a><br />
+  <a href="#flow">4. Phase-1 / Phase-2 flow diagram</a><br />
+  <a href="#roles">5. Role mapping</a><br />
+  <a href="#db">6. Database changes (every column &amp; constraint)</a><br />
+  <a href="#architecture">7. Architecture &mdash; what was built</a><br />
+  <a href="#files">8. Files inventory (every new + modified file)</a><br />
+  <a href="#api">9. API endpoints (every new + changed route)</a><br />
+  <a href="#env">10. Environment, packages, build &mdash; nothing changed</a><br />
+  <a href="#ship">11. Phase 2 ship checklist (exact commands)</a><br />
+  <a href="#creds">12. Demo credentials (now and after Phase 2)</a><br />
+  <a href="#verify">13. Verification steps</a><br />
+  <a href="#rollback">14. Rollback plan</a><br />
+  <a href="#dontdo">15. Do NOT do this</a><br />
+  <a href="#references">16. References &amp; further reading</a>
+</div>
+
+<!-- ============ 1. SUMMARY ============ -->
+<h2 id="summary">1. TL;DR summary &amp; status grid</h2>
+<div class="panel good">
+  <table>
+    <thead><tr><th style="width:120px">Status</th><th>Item</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill done">DONE</span></td><td>Branches table created in Supabase. Main Branch (id=1) seeded.</td></tr>
+      <tr><td><span class="pill done">DONE</span></td><td><code>branch_id</code> columns added to <code>users</code>, <code>bookings</code>, <code>doctor_centers</code>, <code>serviceable_pincodes</code>.</td></tr>
+      <tr><td><span class="pill done">DONE</span></td><td>All 16 existing bookings, 1 doctor_center, 2 serviceable_pincodes backfilled to <code>branch_id = 1</code>.</td></tr>
+      <tr><td><span class="pill done">DONE</span></td><td><code>bookings.branch_id</code> has <code>DEFAULT 1</code> + <code>NOT NULL</code>. Phase-1 booking INSERTs auto-fill Main Branch.</td></tr>
+      <tr><td><span class="pill done">DONE</span></td><td><code>admin@gmail.com</code> flipped: <code>role='admin'</code>, <code>admin_role='admin'</code>, <code>branch_id=1</code>. Phase-1 code's <code>requireRole('admin','super_admin')</code> still admits him.</td></tr>
+      <tr><td><span class="pill done">DONE</span></td><td>Partial unique index <code>users_one_active_admin_per_branch</code> enforces one-active-admin-per-branch.</td></tr>
+      <tr><td><span class="pill done">DONE</span></td><td>Phase 2 code committed to <code>multiple_branch_feature_added_phase2</code>. Single commit <code>a74697f</code>, 26 files, +2552 / -188.</td></tr>
+      <tr><td><span class="pill done">DONE</span></td><td>Frontend typecheck, backend typecheck, shared-package typecheck &mdash; all clean.</td></tr>
+      <tr><td><span class="pill done">DONE</span></td><td>Demo URL on <code>main</code> verified working post-migration: patient can book, admin sees full dashboard, no UI change visible.</td></tr>
+      <tr><td><span class="pill todo">TODO Phase 2 day</span></td><td>Merge <code>multiple_branch_feature_added_phase2</code> &rarr; <code>main</code> when ready to ship.</td></tr>
+      <tr><td><span class="pill todo">TODO Phase 2 day</span></td><td>Run <code>pnpm db:seed</code> after the merge to create <code>superadmin@gmail.com</code> + (optional) Mumbai demo branch.</td></tr>
+      <tr><td><span class="pill never">NEVER</span></td><td>Do not run <code>pnpm db:seed</code> against the demo DB <strong>while Phase 1 is still deployed</strong> &mdash; the seed on <code>main</code> would flip <code>admin@gmail.com</code>'s role back to <code>super_admin</code>.</td></tr>
+      <tr><td><span class="pill never">NEVER</span></td><td>Do not remove the <code>DEFAULT 1</code> from <code>bookings.branch_id</code> until after Phase 2 ships.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============ 2. INTENT ============ -->
+<h2 id="intent">2. The client's intent</h2>
+<p>The client runs multiple physical clinic locations. They want the platform to model each clinic as a <strong>branch</strong>, with these constraints:</p>
+<ol>
+  <li><strong>Master super admin</strong> creates branch-admin accounts. One branch = one admin. Branch metadata (name, address, phone, GSTIN, UPI ID) is captured <em>inline</em> in the same form &mdash; no separate "Branches" CRUD UI.</li>
+  <li>The super admin is <strong>view-only</strong> across every screen except the Branch Admins page. They select a branch from a top-bar dropdown and see exactly what that branch's admin would see &mdash; bookings, payments, patients, doctors, services, pincodes, analytics &mdash; but cannot create / edit / delete anything.</li>
+  <li><strong>Branch admins</strong> (created by the super admin) keep the full current admin toolkit, but everything they see is automatically scoped to their branch.</li>
+  <li><strong>Patients</strong> pick a branch as Step 0 of the booking flow before they see the existing patient-info / address-and-slot / confirm-and-pay wizard.</li>
+  <li>The currently demo'd <code>admin@gmail.com</code> account "is basically one branch admin" &mdash; convert him to the Main Branch admin so the existing demo keeps working unchanged.</li>
+  <li>Super-admin dashboard shows a <strong>branches-comparison widget</strong> on the "All branches" view, and the analytics page gets a <strong>revenue-by-branch</strong> bar chart + pie chart + share table.</li>
+  <li>One new table (<code>branches</code>) is unavoidable; everything else uses <code>branch_id</code> columns on existing tables.</li>
+  <li><strong>The live demo URL must NOT show this feature until Phase 2 ships.</strong> Strategy: apply the DB migration now (Phase 2 capable), but keep the new code on a separate branch until cutover.</li>
+</ol>
+
+<!-- ============ 3. CURRENT STATE ============ -->
+<h2 id="current">3. Current state</h2>
+
+<h3>3.1 Database (Supabase, ap-south-1)</h3>
+<p>Connection string lives in <code>backend/.env</code> as <code>DATABASE_URL</code>. Verified live with SQL queries immediately after the migration ran:</p>
+<pre>=== branches ===
+| id | branch_code  | name                            | city    | is_active |
+| 1  | AROGYA-MAIN  | Arogya Diagnostics &mdash; Main Branch | Kolkata | true      |
+
+=== admin@gmail.com row ===
+| email             | role  | admin_role | branch_id | is_active |
+| admin@gmail.com   | admin | admin      | 1         | true      |
+
+=== bookings.branch_id coverage ===
+| branch_id | bookings |
+| 1         | 16       |
+
+=== column default on bookings.branch_id ===
+| column_name | column_default | is_nullable | data_type |
+| branch_id   | 1              | NO          | bigint    |
+
+=== existing data totals (sanity) ===
+| users_total | bookings_total | services_total | pincodes_total | centers_total |
+| 9           | 16             | 11             | 2              | 1             |</pre>
+
+<h3>3.2 Git branches</h3>
+<table>
+  <thead><tr><th>Branch</th><th>Code state</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>main</code></td><td>Phase 1 (single-clinic)</td><td>Deployed to the live demo URL. Client sees this.</td></tr>
+    <tr><td><code>development</code></td><td>Phase 1 (matches main)</td><td>Day-to-day work branch. Currently checked out.</td></tr>
+    <tr><td><code>multiple_branch_feature_added_phase2</code></td><td>Phase 2 (multi-branch)</td><td>The complete Phase 2 implementation as a single commit (<code>a74697f</code>). Merge into main when ready.</td></tr>
+    <tr><td><code>development_backup</code>, <code>staging</code>, <code>ui1</code>, <code>ui2</code></td><td>(pre-existing)</td><td>Not touched by this work.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============ 4. FLOW ============ -->
+<h2 id="flow">4. Phase-1 / Phase-2 flow diagram</h2>
+<div class="ascii">              TODAY                              PHASE-2 SHIP DAY
+              -----                              ---------------
+
+   ┌──────────────────────────┐        ┌──────────────────────────┐
+   │ Live demo URL            │        │ Live demo URL            │
+   │ (running main branch)    │        │ (running merged code)    │
+   │                          │        │                          │
+   │  Phase-1 code            │        │  Phase-2 code            │
+   │  ↓                       │        │  ↓                       │
+   │  /api/v1/auth/login      │        │  + /api/v1/public/branches│
+   │  /api/v1/admin/bookings  │        │  + /api/v1/admin/branch-  │
+   │  /api/v1/bookings/test   │        │    admins/*               │
+   │  ...                     │        │  + scopedBranchFilter     │
+   │                          │        │  + enforceBranchAdmin-    │
+   │                          │        │    Write                  │
+   └──────────────────────────┘        └──────────────────────────┘
+              ↓                                       ↓
+   ┌──────────────────────────────────────────────────────────────┐
+   │                  Supabase Postgres (one DB)                  │
+   │                                                              │
+   │  TODAY (Phase-2 capable):                                    │
+   │   • branches table (Main Branch id=1)                        │
+   │   • branch_id columns on users / bookings / doctor_centers / │
+   │     serviceable_pincodes                                     │
+   │   • bookings.branch_id DEFAULT 1, NOT NULL  ◄── KEY GUARDRAIL│
+   │   • admin@gmail.com  role=admin  branch_id=1                 │
+   │   • All 16 existing bookings tagged branch_id=1              │
+   │                                                              │
+   │  AFTER `pnpm db:seed` on Phase-2 day:                        │
+   │   + superadmin@gmail.com (role=super_admin, branch_id=NULL)  │
+   │   + Mumbai branch (optional)                                 │
+   └──────────────────────────────────────────────────────────────┘
+
+   Phase-1 INSERT INTO bookings (cols_without_branch_id) VALUES (...)
+        → Postgres autofills branch_id=1 thanks to DEFAULT  ✔
+   Phase-2 INSERT INTO bookings (..., branch_id) VALUES (..., $N)
+        → Explicit value used; default is overridden        ✔
+</div>
+
+<!-- ============ 5. ROLES ============ -->
+<h2 id="roles">5. Role mapping</h2>
+<table>
+  <thead><tr><th>Role</th><th>branch_id</th><th>Write access</th><th>Read access</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>super_admin</code><br /><span style="color:var(--muted)">superadmin@gmail.com</span></td>
+      <td><code>NULL</code></td>
+      <td>Only <code>/admin/branch-admins/*</code>. Everything else returns <code>403 SUPER_ADMIN_READ_ONLY</code> from the router-level <code>enforceBranchAdminWrite</code> gate.</td>
+      <td>All branches (or filter to one via the top-bar dropdown). Sees the exact same screens as a branch admin would for the selected branch.</td>
+    </tr>
+    <tr>
+      <td><code>admin</code> (branch admin)<br /><span style="color:var(--muted)">admin@gmail.com after migration</span></td>
+      <td>Set to their branch (post-migration: <code>1</code>)</td>
+      <td>Full CRUD on own branch's data. <code>?branch_id=N</code> query-param tampering is silently ignored by <code>scopedBranchFilter</code>.</td>
+      <td>Own branch only.</td>
+    </tr>
+    <tr>
+      <td><code>patient</code></td>
+      <td><code>NULL</code></td>
+      <td>Own bookings (existing flow).</td>
+      <td>Picks a branch as Step 0 of every booking. May book at any active branch.</td>
+    </tr>
+    <tr>
+      <td><code>doctor</code></td>
+      <td><code>NULL</code></td>
+      <td>(Unchanged.)</td>
+      <td>Doctors can serve multiple branches via existing <code>doctor_centers</code> (now also carries <code>branch_id</code>).</td>
+    </tr>
+  </tbody>
+</table>
+<div class="panel">
+  <strong>One-branch-one-admin invariant</strong> &mdash; partial unique index:
+  <pre>CREATE UNIQUE INDEX users_one_active_admin_per_branch
+    ON users (branch_id)
+ WHERE role = 'admin' AND is_active = TRUE AND branch_id IS NOT NULL;</pre>
+  Trying to create a second active admin for an already-staffed branch returns <code>409 BRANCH_HAS_ACTIVE_ADMIN</code>. Deactivating an admin (<code>is_active=FALSE</code>) frees the slot.
+</div>
+
+<!-- ============ 6. DB CHANGES ============ -->
+<h2 id="db">6. Database changes (every column &amp; constraint)</h2>
+<p>All changes live in a single migration: <code>supabase/migrations/0028_branches.sql</code> on branch <code>multiple_branch_feature_added_phase2</code>. The migration is idempotent and transactional.</p>
+
+<h3>6.1 New table <code>branches</code></h3>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Constraint / Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>BIGSERIAL</td><td>PRIMARY KEY</td></tr>
+    <tr><td><code>branch_code</code></td><td>VARCHAR(20)</td><td>UNIQUE NOT NULL (e.g. <code>AROGYA-MAIN</code>, <code>AROGYA-MUM</code>)</td></tr>
+    <tr><td><code>name</code></td><td>VARCHAR(150)</td><td>NOT NULL</td></tr>
+    <tr><td><code>address_line1</code></td><td>VARCHAR(255)</td><td>NOT NULL</td></tr>
+    <tr><td><code>address_line2</code></td><td>VARCHAR(255)</td><td>NULL OK</td></tr>
+    <tr><td><code>city</code></td><td>VARCHAR(100)</td><td>NOT NULL</td></tr>
+    <tr><td><code>state</code></td><td>VARCHAR(100)</td><td>NOT NULL</td></tr>
+    <tr><td><code>pincode</code></td><td>VARCHAR(10)</td><td>NOT NULL</td></tr>
+    <tr><td><code>phone</code></td><td>VARCHAR(15)</td><td>NOT NULL</td></tr>
+    <tr><td><code>email</code></td><td>CITEXT</td><td>NULL OK</td></tr>
+    <tr><td><code>gstin</code></td><td>VARCHAR(20)</td><td>NULL OK (per-branch override)</td></tr>
+    <tr><td><code>upi_id</code></td><td>VARCHAR(100)</td><td>NULL OK (per-branch override)</td></tr>
+    <tr><td><code>upi_payee_name</code></td><td>VARCHAR(100)</td><td>NULL OK</td></tr>
+    <tr><td><code>business_hours</code></td><td>JSONB</td><td>NULL OK</td></tr>
+    <tr><td><code>is_active</code></td><td>BOOLEAN</td><td>NOT NULL DEFAULT TRUE</td></tr>
+    <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>shared <code>set_updated_at()</code> trigger applied</td></tr>
+  </tbody>
+</table>
+
+<h3>6.2 New columns on existing tables</h3>
+<table>
+  <thead><tr><th>Table</th><th>Column</th><th>State after migration</th><th>Backfill</th></tr></thead>
+  <tbody>
+    <tr><td><code>users</code></td><td><code>branch_id BIGINT REFERENCES branches(id)</code></td><td>Nullable (set for branch admins only)</td><td>NULL for super_admin/patient/doctor; admin@gmail.com set to 1</td></tr>
+    <tr><td><code>bookings</code></td><td><code>branch_id BIGINT REFERENCES branches(id)</code></td><td><strong>NOT NULL, DEFAULT 1</strong></td><td>All 16 existing rows set to 1</td></tr>
+    <tr><td><code>doctor_centers</code></td><td><code>branch_id BIGINT REFERENCES branches(id)</code></td><td>Nullable</td><td>1 existing row set to 1</td></tr>
+    <tr><td><code>serviceable_pincodes</code></td><td><code>branch_id BIGINT REFERENCES branches(id)</code></td><td>Nullable</td><td>2 existing rows set to 1</td></tr>
+  </tbody>
+</table>
+
+<h3>6.3 Data mutation</h3>
+<pre>UPDATE users
+   SET role       = 'admin',
+       admin_role = 'admin',
+       branch_id  = 1
+ WHERE email      = 'admin@gmail.com'
+   AND role       = 'super_admin';</pre>
+<p>Idempotent (the WHERE clause excludes the row after the flip succeeds).</p>
+
+<h3>6.4 New indexes</h3>
+<ul>
+  <li><code>branches_active_idx</code> on <code>branches(is_active) WHERE is_active = TRUE</code></li>
+  <li><code>idx_bookings_branch_status</code> on <code>bookings(branch_id, booking_status, scheduled_date DESC)</code></li>
+  <li><code>idx_pincodes_branch</code> on <code>serviceable_pincodes(branch_id)</code></li>
+  <li><code>idx_doctor_centers_branch</code> on <code>doctor_centers(branch_id)</code></li>
+  <li><code>users_one_active_admin_per_branch</code> partial UNIQUE on <code>users(branch_id) WHERE role='admin' AND is_active=TRUE AND branch_id IS NOT NULL</code></li>
+</ul>
+
+<h3>6.5 Intentionally NOT modified</h3>
+<ul>
+  <li><strong><code>clinic_settings</code></strong> &mdash; its <code>UNIQUE(key)</code> constraint would conflict with per-branch overrides. Per-branch UPI / GSTIN / phone live on the <code>branches</code> table directly; <code>clinic_settings</code> remains the global fallback.</li>
+  <li><strong><code>uq_active_slot</code></strong> on <code>bookings</code> &mdash; not changed; a doctor cannot be at two branches at the same hour anyway.</li>
+  <li><strong><code>serviceable_pincodes.pincode</code> UNIQUE</strong> &mdash; kept global for now; if two branches need to share a pincode, promote to <code>(pincode, branch_id)</code> in a follow-up migration.</li>
+</ul>
+
+<!-- ============ 7. ARCHITECTURE ============ -->
+<h2 id="architecture">7. Architecture &mdash; what was built (code side)</h2>
+
+<h3>7.1 Backend (Express on Node, pg, JWT, bcrypt)</h3>
+<ul>
+  <li><strong>JWT payload</strong> (<code>backend/src/lib/jwt.ts</code>): added optional <code>branch_id?: number | null</code>.</li>
+  <li><strong>Auth middleware</strong> (<code>backend/src/middleware/auth.ts</code>): <code>AuthUser</code> now carries <code>branch_id</code>; new helpers:
+    <ul>
+      <li><code>requireSuperAdmin</code> &mdash; sugar over <code>requireRole('super_admin')</code>.</li>
+      <li><code>scopedBranchFilter(req)</code> &mdash; returns the <code>branch_id</code> to filter admin reads by. <code>admin</code> &rarr; pinned to own; <code>super_admin</code> &rarr; reads <code>?branch_id=N</code> or NULL (= no filter).</li>
+      <li><code>enforceBranchAdminWrite</code> &mdash; rejects super_admin writes with <code>403 SUPER_ADMIN_READ_ONLY</code>.</li>
+    </ul>
+  </li>
+  <li><strong>Auth routes</strong> (<code>authRoutes.ts</code>): login / signup / OTP responses include <code>branch_id</code>; <code>/auth/me</code> selects it too.</li>
+  <li><strong>New router</strong> <code>branchAdminsRoutes.ts</code> &mdash; mounted under <code>/api/v1</code> in <code>server.ts</code>. Endpoints listed in section 9.</li>
+  <li><strong>Router-level write gate</strong> in <code>phase2Routes.ts</code> &mdash; intercepts every <code>POST | PATCH | PUT | DELETE</code> under <code>/admin/*</code>, runs <code>requireAuth</code> then <code>enforceBranchAdminWrite</code>. Branch-admin router is mounted separately so it bypasses this gate.</li>
+  <li><strong>Booking POSTs</strong>: <code>/bookings/test</code>, <code>/bookings/doctor-appointment</code>, walk-in admin endpoint. Each accepts optional <code>branch_id</code> via Zod, defaults to <code>1</code> at the application layer (defense in depth on top of the DB DEFAULT 1).</li>
+  <li><strong>Admin read endpoints</strong> branch-scoped via <code>scopedBranchFilter</code>:
+    <ul>
+      <li><code>/admin/bookings</code> &mdash; WHERE clause</li>
+      <li><code>/admin/bookings/:id</code> &mdash; cross-branch attempts return 404</li>
+      <li><code>/admin/dashboard</code> &mdash; KPIs scoped; <strong>extra payload</strong> <code>branches_comparison[]</code> for super_admin "All branches"</li>
+      <li><code>/admin/analytics</code> &mdash; trends + breakdowns scoped; <strong>extra payload</strong> <code>revenue_by_branch[]</code> for super_admin "All branches"</li>
+      <li><code>/admin/serviceable-pincodes</code> &mdash; WHERE clause</li>
+    </ul>
+  </li>
+  <li><code>/serviceable-pincodes/check</code> &mdash; public endpoint, accepts optional <code>?branch_id</code>.</li>
+</ul>
+
+<h3>7.2 Shared package</h3>
+<p><code>shared/src/types.ts</code>: added <code>Branch</code> interface; added <code>branch_id</code> to <code>User</code>, <code>Booking</code>, <code>DoctorCenter</code>, <code>ServiceablePincode</code>. Auto-exported via existing <code>shared/src/index.ts</code>.</p>
+
+<h3>7.3 Frontend (Vite + React + TanStack Query + Zustand)</h3>
+<ul>
+  <li><strong>State</strong>:
+    <ul>
+      <li><code>stores/authStore.ts</code> &mdash; <code>AuthUser</code> carries <code>branch_id</code>; mock-mode recognises <code>superadmin@gmail.com</code>; <code>buildMockUser</code> sets <code>branch_id=1</code> for admin, NULL for super_admin.</li>
+      <li><strong>NEW</strong> <code>stores/branchFilterStore.ts</code> &mdash; Zustand-persisted <code>selectedBranchId: number | 'all'</code>.</li>
+    </ul>
+  </li>
+  <li><strong>Hooks</strong>:
+    <ul>
+      <li><strong>NEW</strong> <code>hooks/useBranches.ts</code> &mdash; <code>usePublicBranches</code>, <code>useBranchAdmins</code>, <code>useCreateBranchAdmin</code>, <code>useUpdateBranchAdmin</code>, <code>useDeleteBranchAdmin</code>.</li>
+      <li><code>hooks/queries.ts</code> &mdash; per-branch React Query cache keys on <code>useAdminBookings</code>, <code>useAdminPincodes</code>, <code>useAdminDashboard</code>, <code>useAdminAnalytics</code>; <code>TestBookingInput</code> + <code>DoctorAppointmentBookingInput</code> + <code>checkServiceablePincode</code> all carry optional <code>branch_id</code>; new payload types <code>DashboardBranchComparisonRow</code> + <code>AnalyticsRevenueByBranchRow</code>.</li>
+    </ul>
+  </li>
+  <li><strong>Components</strong>:
+    <ul>
+      <li><strong>NEW</strong> <code>components/admin/BranchFilterDropdown.tsx</code> &mdash; super_admin: real dropdown ("All branches" + each); branch admin: read-only chip.</li>
+      <li><strong>NEW</strong> <code>components/admin/ReadOnlyAdminContext.tsx</code> &mdash; React context (true for super_admin), provided once in <code>AdminLayout</code>.</li>
+      <li><strong>NEW</strong> <code>components/admin/WriteAction.tsx</code> &mdash; thin wrapper that hides its children for super_admin.</li>
+    </ul>
+  </li>
+  <li><strong>Pages</strong>:
+    <ul>
+      <li><strong>NEW</strong> <code>pages/admin/AdminBranchAdminsPage.tsx</code> &mdash; the only new admin page. Combined branch + admin form, drawer-style modal, surfaces 409 inline. Belt-and-suspenders <code>Navigate</code> back to <code>/admin</code> if role isn't super_admin.</li>
+      <li><code>layouts/AdminLayout.tsx</code> &mdash; "Branch Admins" nav (super_admin only), top-bar <code>BranchFilterDropdown</code> (also in mobile header), <code>ReadOnlyAdminProvider</code> wraps the page outlet.</li>
+      <li><code>pages/admin/AdminDashboardPage.tsx</code> &mdash; branches-comparison widget (super_admin "All branches"), quick-actions hidden via <code>&lt;WriteAction&gt;</code>.</li>
+      <li><code>pages/admin/AdminAnalyticsPage.tsx</code> &mdash; revenue-by-branch <strong>bar chart + pie chart + share table</strong> (super_admin "All branches"), CSV export extended.</li>
+      <li><code>pages/admin/AdminLoginPage.tsx</code> &mdash; shows both demo credentials (branch admin + super admin) with auto-fill buttons.</li>
+      <li><code>pages/patient/BookTestPage.tsx</code>, <code>pages/patient/BookDoctorPage.tsx</code> &mdash; Step 0 branch picker before existing wizard; auto-selects on single-branch deployments via <code>queueMicrotask</code>.</li>
+      <li><code>pages/public/ContactPage.tsx</code> &mdash; lists every active branch dynamically from <code>/public/branches</code>; falls back to hardcoded clinic info if API unreachable.</li>
+    </ul>
+  </li>
+  <li><strong>Routes</strong>: <code>App.tsx</code> registers <code>/admin/branch-admins</code> inside the admin layout (gated by <code>RequireAuth roles={['admin','super_admin']}</code> + the page-level navigate-away for non-super-admin).</li>
+</ul>
+
+<!-- ============ 8. FILES ============ -->
+<h2 id="files">8. Files inventory</h2>
+
+<h3>8.1 New files (9)</h3>
+<table>
+  <tbody>
+    <tr><td><code>supabase/migrations/0028_branches.sql</code></td><td>The migration.</td></tr>
+    <tr><td><code>supabase/seed/06_master_admin.sql</code></td><td>Seeds <code>superadmin@gmail.com / 123</code> + optional Mumbai branch.</td></tr>
+    <tr><td><code>backend/src/modules/phase2/branchAdminsRoutes.ts</code></td><td>The new Express router.</td></tr>
+    <tr><td><code>frontend/src/stores/branchFilterStore.ts</code></td><td>Branch dropdown state.</td></tr>
+    <tr><td><code>frontend/src/hooks/useBranches.ts</code></td><td>Public/admin branches hooks.</td></tr>
+    <tr><td><code>frontend/src/components/admin/BranchFilterDropdown.tsx</code></td><td>Top-bar dropdown.</td></tr>
+    <tr><td><code>frontend/src/components/admin/ReadOnlyAdminContext.tsx</code></td><td>Context provider.</td></tr>
+    <tr><td><code>frontend/src/components/admin/WriteAction.tsx</code></td><td>Hide-when-read-only wrapper.</td></tr>
+    <tr><td><code>frontend/src/pages/admin/AdminBranchAdminsPage.tsx</code></td><td>The single new admin page.</td></tr>
+  </tbody>
+</table>
+
+<h3>8.2 Modified files (17)</h3>
+<table>
+  <tbody>
+    <tr><td><code>backend/src/lib/jwt.ts</code></td></tr>
+    <tr><td><code>backend/src/middleware/auth.ts</code></td></tr>
+    <tr><td><code>backend/src/modules/auth/authRoutes.ts</code></td></tr>
+    <tr><td><code>backend/src/modules/phase2/phase2Routes.ts</code></td></tr>
+    <tr><td><code>backend/src/server.ts</code> (mounts new router)</td></tr>
+    <tr><td><code>shared/src/types.ts</code></td></tr>
+    <tr><td><code>frontend/src/App.tsx</code> (new route)</td></tr>
+    <tr><td><code>frontend/src/hooks/queries.ts</code></td></tr>
+    <tr><td><code>frontend/src/layouts/AdminLayout.tsx</code></td></tr>
+    <tr><td><code>frontend/src/pages/admin/AdminAnalyticsPage.tsx</code></td></tr>
+    <tr><td><code>frontend/src/pages/admin/AdminDashboardPage.tsx</code></td></tr>
+    <tr><td><code>frontend/src/pages/admin/AdminLoginPage.tsx</code></td></tr>
+    <tr><td><code>frontend/src/pages/patient/BookDoctorPage.tsx</code></td></tr>
+    <tr><td><code>frontend/src/pages/patient/BookTestPage.tsx</code></td></tr>
+    <tr><td><code>frontend/src/pages/public/ContactPage.tsx</code></td></tr>
+    <tr><td><code>frontend/src/stores/authStore.ts</code></td></tr>
+    <tr><td><code>supabase/seed/05_super_admin.sql</code> (rewritten: admin@gmail.com seeds as branch admin now)</td></tr>
+  </tbody>
+</table>
+
+<h3>8.3 NOT changed (explicit)</h3>
+<ul>
+  <li>No new npm packages. <code>backend/package.json</code> and <code>frontend/package.json</code> are unchanged.</li>
+  <li>No environment variables added. <code>backend/.env</code> needs nothing new.</li>
+  <li>No build config changes &mdash; <code>tsconfig.json</code>, <code>vite.config.ts</code>, <code>turbo.json</code> all unchanged.</li>
+  <li>No CI changes &mdash; Netlify config (<code>netlify.toml</code> if present) untouched.</li>
+  <li>No <code>clinic_settings</code> changes; no other migration files touched.</li>
+</ul>
+
+<!-- ============ 9. API ============ -->
+<h2 id="api">9. API endpoints (every new + changed route)</h2>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/public/branches</code></td><td>none</td><td><strong>NEW</strong>. Active branches for patient picker + dropdown.</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/admin/branch-admins</code></td><td>super_admin</td><td><strong>NEW</strong>. List <code>{ branch, admin | null }</code>.</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/admin/branch-admins</code></td><td>super_admin</td><td><strong>NEW</strong>. Transactional: one branch row + one user row.</td></tr>
+    <tr><td>PATCH</td><td><code>/api/v1/admin/branch-admins/:adminUserId</code></td><td>super_admin</td><td><strong>NEW</strong>. Update branch and/or admin in one tx.</td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/admin/branch-admins/:adminUserId</code></td><td>super_admin</td><td><strong>NEW</strong>. Soft-disable the admin.</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/bookings/test</code></td><td>patient</td><td>Now accepts optional <code>branch_id</code> (default 1).</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/bookings/doctor-appointment</code></td><td>patient</td><td>Now accepts optional <code>branch_id</code> (default 1).</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/admin/dashboard</code></td><td>admin / super_admin</td><td>Branch-scoped. Adds <code>branches_comparison[]</code> for super_admin "All branches".</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/admin/analytics</code></td><td>admin / super_admin</td><td>Branch-scoped. Adds <code>revenue_by_branch[]</code> for super_admin "All branches".</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/admin/bookings(/:id)</code></td><td>admin / super_admin</td><td>Branch-scoped; cross-branch reads return 404.</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/admin/serviceable-pincodes</code></td><td>admin / super_admin</td><td>Branch-scoped.</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/admin/serviceable-pincodes</code></td><td>branch admin only</td><td>Tagged with the admin's branch automatically.</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/serviceable-pincodes/check</code></td><td>none</td><td>Optional <code>?branch_id</code>.</td></tr>
+    <tr><td>POST/PATCH/PUT/DELETE</td><td><code>/api/v1/admin/*</code> (everything except branch-admins)</td><td>branch admin only</td><td>Super_admin attempts return <code>403 SUPER_ADMIN_READ_ONLY</code>.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============ 10. ENV ============ -->
+<h2 id="env">10. Environment, packages, build &mdash; nothing changed</h2>
+<table class="kv">
+  <tbody>
+    <tr><td>Environment variables added</td><td>None. <code>backend/.env</code> and <code>frontend/.env</code> require no new keys.</td></tr>
+    <tr><td>npm/pnpm packages added</td><td>None. No <code>package.json</code> deltas in backend, frontend, or shared.</td></tr>
+    <tr><td>Build configuration</td><td>Unchanged. <code>tsconfig.json</code>, <code>vite.config.ts</code>, <code>turbo.json</code>, <code>eslint.config.*</code> &mdash; all unchanged.</td></tr>
+    <tr><td>CI / deployment</td><td>Unchanged. Netlify (frontend) and the API host both deploy identically. No new build commands.</td></tr>
+    <tr><td>Storage buckets</td><td>Unchanged. <code>STORAGE_DRIVER</code> stays as configured.</td></tr>
+    <tr><td>Tests</td><td>None added. Phase 2 typecheck-passes across backend / frontend / shared via <code>pnpm typecheck</code> (turbo).</td></tr>
+  </tbody>
+</table>
+<p>This means a Phase 2 deploy is a pure code-and-data change &mdash; no infra coordination.</p>
+
+<!-- ============ 11. SHIP CHECKLIST ============ -->
+<h2 id="ship">11. Phase 2 ship checklist (exact commands)</h2>
+<div class="panel good">
+<ol>
+  <li>Communicate the cutover window to the team. Decide who watches for errors and who has rollback authority.</li>
+  <li>(Optional, recommended) Take a Supabase backup snapshot via the Supabase dashboard. The schema is already there but a backup is cheap insurance.</li>
+  <li>
+    Merge into main:
+    <pre>git fetch origin
+git checkout main
+git pull origin main
+git merge multiple_branch_feature_added_phase2
+# Resolve any conflicts (none expected if main hasn't moved since the branch was cut).
+git push origin main</pre>
+  </li>
+  <li>CI/CD rebuilds and redeploys frontend + backend automatically. Wait for the deploy to go green.</li>
+  <li>
+    Seed the master super admin + (optional) Mumbai demo branch:
+    <pre>pnpm db:seed</pre>
+    This runs idempotently. <code>05_super_admin.sql</code> re-confirms <code>admin@gmail.com</code> as branch admin (no-op if migration already did this), and <code>06_master_admin.sql</code> creates <code>superadmin@gmail.com / 123</code> + the Mumbai branch.
+  </li>
+  <li>Smoke-test against the live site &mdash; see <a href="#verify">section 13</a>.</li>
+  <li>Share the master super admin credentials (<code>superadmin@gmail.com / 123</code>) with whoever owns master access. Suggest a password change after first login.</li>
+</ol>
+</div>
+<p><strong>No database migration is needed on cutover day.</strong> The Phase-2 schema is already in place.</p>
+
+<!-- ============ 12. CREDS ============ -->
+<h2 id="creds">12. Demo credentials</h2>
+
+<h3>12.1 During Phase 1 (now)</h3>
+<table class="kv">
+  <tbody>
+    <tr><td>Patient</td><td><code>patient@gmail.com</code> / <code>123</code></td></tr>
+    <tr><td>Admin (Main Branch admin in DB; behaves like the old super admin in deployed code)</td><td><code>admin@gmail.com</code> / <code>123</code></td></tr>
+  </tbody>
+</table>
+
+<h3>12.2 After Phase 2 ships (post <code>pnpm db:seed</code>)</h3>
+<table class="kv">
+  <tbody>
+    <tr><td>Patient</td><td><code>patient@gmail.com</code> / <code>123</code></td></tr>
+    <tr><td>Branch admin (Main Branch)</td><td><code>admin@gmail.com</code> / <code>123</code></td></tr>
+    <tr><td>Master super admin (view-only across all branches + creates branch admins)</td><td><code>superadmin@gmail.com</code> / <code>123</code></td></tr>
+  </tbody>
+</table>
+
+<!-- ============ 13. VERIFY ============ -->
+<h2 id="verify">13. Verification steps</h2>
+
+<h3>13.1 Right now (Phase 1 deployed, DB Phase-2 capable)</h3>
+<ol>
+  <li>Open the demo URL &mdash; identical to before. <span class="check">&#10003;</span></li>
+  <li>Log in as <code>patient@gmail.com / 123</code>, book a test &mdash; succeeds. Booking gets <code>branch_id=1</code> automatically. <span class="check">&#10003;</span></li>
+  <li>Log in as <code>admin@gmail.com / 123</code>, view dashboard, edit a booking, upload a report &mdash; all work. <span class="check">&#10003;</span></li>
+  <li>No "Branch Admins" tab visible in nav, no branch dropdown, no Step 0 picker. <span class="check">&#10003;</span></li>
+</ol>
+
+<h3>13.2 After Phase 2 ships</h3>
+<ol>
+  <li>Log in as <code>superadmin@gmail.com / 123</code>.</li>
+  <li>Top bar shows a branch dropdown: "All branches" + each active branch.</li>
+  <li>Dashboard shows the branches-comparison widget under the KPI cards.</li>
+  <li>Analytics page shows the "Revenue by branch" section (bar + pie + share table) when filter is "All branches".</li>
+  <li>Sidebar has a "Branch Admins" entry &mdash; click it; table lists branches with their admins.</li>
+  <li>Create a new branch + admin via the modal &mdash; row appears, branch shows up in <code>GET /public/branches</code>.</li>
+  <li>Try the same branch_code twice &mdash; returns 409 with a friendly error inline.</li>
+  <li>Try clicking any "Create" / "Edit" / "Delete" button on any other admin screen &mdash; either absent (hidden by <code>&lt;WriteAction&gt;</code>) or rejected by the backend with <code>403 SUPER_ADMIN_READ_ONLY</code>.</li>
+  <li>Log out, log in as <code>admin@gmail.com / 123</code> &mdash; sees the same admin dashboard as before, all CRUD works, dropdown is a read-only "Main Branch" chip.</li>
+  <li>Log in as a newly created branch admin &mdash; sees only their branch's bookings / payments / reports etc.</li>
+  <li>Log in as <code>patient@gmail.com</code>, book a test &mdash; Step 0 asks for a branch first, then the existing wizard.</li>
+</ol>
+
+<!-- ============ 14. ROLLBACK ============ -->
+<h2 id="rollback">14. Rollback plan</h2>
+
+<h3>14.1 Pre-Phase-2 (currently)</h3>
+<p>If anything looks off right now (it shouldn't &mdash; verified clean), the DB can be rolled back manually:</p>
+<pre>BEGIN;
+ALTER TABLE bookings ALTER COLUMN branch_id DROP NOT NULL;
+ALTER TABLE bookings ALTER COLUMN branch_id DROP DEFAULT;
+-- Reverse the role flip:
+UPDATE users SET role='super_admin', admin_role='super_admin', branch_id=NULL
+ WHERE email='admin@gmail.com';
+-- Optional: drop the new columns and table entirely (NOT NEEDED for Phase-1 safety):
+ALTER TABLE users DROP COLUMN branch_id;
+ALTER TABLE bookings DROP COLUMN branch_id;
+ALTER TABLE doctor_centers DROP COLUMN branch_id;
+ALTER TABLE serviceable_pincodes DROP COLUMN branch_id;
+DROP TABLE branches CASCADE;
+COMMIT;</pre>
+<p>Easier: restore the Supabase backup taken before the migration ran.</p>
+
+<h3>14.2 Post-Phase-2</h3>
+<p>If a problem surfaces after merging Phase 2 into main:</p>
+<pre>git revert -m 1 &lt;merge-sha&gt;
+git push origin main</pre>
+<p>Phase 1 code redeploys, and because the schema is backward-compatible (DEFAULT 1 on <code>bookings.branch_id</code>), the old code keeps working against the migrated DB.</p>
+
+<!-- ============ 15. DO NOT ============ -->
+<h2 id="dontdo">15. Do NOT do this</h2>
+<div class="panel bad">
+<ol>
+  <li><strong>Do NOT run <code>pnpm db:seed</code> against the demo DB while Phase 1 is still deployed.</strong> The seed in <code>main</code> still inserts <code>admin@gmail.com</code> as <code>super_admin</code> and would flip his role back. Functionally that's fine (both roles still pass guards in Phase 1 code), but it's inconsistent with the migration's intent. Wait until after the Phase-2 merge.</li>
+  <li><strong>Do NOT delete or rename the <code>branches</code> table or any <code>branch_id</code> column.</strong> The deployed Phase-1 code doesn't reference them, but the new code expects them on day one.</li>
+  <li><strong>Do NOT remove the <code>DEFAULT 1</code> on <code>bookings.branch_id</code> until after Phase 2 ships.</strong> It's the single guardrail that keeps Phase-1 booking INSERTs working.</li>
+  <li><strong>Do NOT force-push to <code>main</code>.</strong> Use a normal merge.</li>
+  <li><strong>Do NOT seed <code>superadmin@gmail.com</code> manually before Phase-2 ships</strong> &mdash; the deployed Phase-1 frontend has no UI for them and they'd just sit unused.</li>
+  <li><strong>Do NOT touch <code>clinic_settings</code>.</strong> Per-branch overrides live on the <code>branches</code> table itself. <code>clinic_settings</code> is left as the global default fallback.</li>
+  <li><strong>Do NOT cherry-pick the migration to <code>main</code> before merging the Phase-2 branch.</strong> The migration is already applied to the DB; only the code part is pending.</li>
+</ol>
+</div>
+
+<!-- ============ 16. REFS ============ -->
+<h2 id="references">16. References &amp; further reading</h2>
+<ul>
+  <li><strong>Plan file</strong> (full architectural rationale + safety audit): <code>C:\Users\pradh\.claude\plans\so-as-per-my-majestic-lantern.md</code></li>
+  <li><strong>Migration</strong>: <code>supabase/migrations/0028_branches.sql</code> on branch <code>multiple_branch_feature_added_phase2</code></li>
+  <li><strong>Seed</strong>: <code>supabase/seed/05_super_admin.sql</code> (rewritten) + <code>supabase/seed/06_master_admin.sql</code> (new) on branch <code>multiple_branch_feature_added_phase2</code></li>
+  <li><strong>Phase 2 commit</strong>: <code>a74697f</code> on <code>multiple_branch_feature_added_phase2</code> &mdash; "feat(phase2): multi-branch (multi-clinic) architecture" (26 files, +2552 / -188)</li>
+  <li><strong>Memory entry</strong> (Claude's per-project memory): <code>memory/project_multi_branch.md</code></li>
+  <li><strong>Related memory files</strong> updated in the same change: <code>memory/MEMORY.md</code>, <code>memory/reference_demo_creds.md</code>, <code>memory/project_db_schema.md</code></li>
+</ul>
+
+<div class="footer">Generated by Claude during the Phase-2 build. If anything here drifts from reality, trust the migration file and the commit on <code>multiple_branch_feature_added_phase2</code>.</div>
+
+</main>
+</body>
+</html>
