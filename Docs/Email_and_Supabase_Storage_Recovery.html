@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Arogya — Email + Supabase Storage Recovery Plan</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --ink: #0f172a;
+      --muted: #475569;
+      --line: #e2e8f0;
+      --brand: #0E7C66;
+      --warn: #b45309;
+      --warn-bg: #fef3c7;
+      --code-bg: #0f172a;
+      --code-ink: #e2e8f0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px 16px; background: var(--bg); color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6; font-size: 15px;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    header { border-bottom: 3px solid var(--brand); padding-bottom: 14px; margin-bottom: 24px; }
+    h1 { margin: 0 0 6px; font-size: 26px; }
+    .subtitle { color: var(--muted); font-size: 14px; }
+    section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 22px 24px; margin: 18px 0; }
+    h2 { margin: 0 0 10px; font-size: 20px; color: var(--brand); border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+    h3 { margin: 18px 0 6px; font-size: 15px; }
+    p { margin: 8px 0; }
+    code { font-family: "SF Mono", Consolas, "Courier New", monospace; font-size: 13px;
+           background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+    pre { background: var(--code-bg); color: var(--code-ink); padding: 14px 16px; border-radius: 8px;
+          overflow-x: auto; font-size: 13px; line-height: 1.5; }
+    pre code { background: transparent; color: inherit; padding: 0; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { background: #f8fafc; font-weight: 600; }
+    .callout { background: var(--warn-bg); border-left: 4px solid var(--warn);
+               padding: 12px 16px; border-radius: 6px; margin: 12px 0; font-size: 14px; }
+    .callout strong { color: var(--warn); }
+    ul, ol { padding-left: 22px; }
+    li { margin: 4px 0; }
+    .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+           background: #e0f2f1; color: var(--brand); font-weight: 600; vertical-align: middle; }
+    footer { color: var(--muted); font-size: 13px; text-align: center; margin: 28px 0 12px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Email + Supabase Storage — Recovery Plan</h1>
+  <div class="subtitle">
+    Captured during development on 17 May 2026. Use this document to re-implement the email (Resend)
+    and file-storage (Supabase Storage) work when production-readiness time arrives — currently the
+    client is testing on the existing Render + Netlify + Supabase stack and no live code changes
+    have been merged.
+  </div>
+</header>
+
+<section>
+  <h2>Why this exists</h2>
+  <p>
+    Two production-readiness gates have been identified in the current build:
+  </p>
+  <ol>
+    <li><strong>Patient files</strong> (lab reports, payment proofs, doctor photos) are stored as Postgres BYTEA. Fine for the MVP, but at <strong>~5 GB</strong> of file volume the relational DB starts feeling it. The Express backend already has a pluggable <code>StorageAdapter</code> interface designed exactly for this swap.</li>
+    <li><strong>Transactional email</strong> (OTP, booking confirmed, report-ready, payment re-verified) is not yet sent. The <code>notify()</code> helper writes to the <code>notifications</code> table only.</li>
+  </ol>
+  <p>
+    This document captures the implementation that was prototyped and then reverted. When the client
+    is ready (after testing concludes), follow the steps below to re-apply it cleanly.
+  </p>
+  <div class="callout">
+    <strong>Constraints recorded:</strong>
+    <ul style="margin: 6px 0 0;">
+      <li>Custom Express API stays the source of truth — no Supabase Auth, no Edge Functions.</li>
+      <li><strong>Email only — no SMS.</strong> MSG91 is dropped from the plan. OTP and notifications go via Resend.</li>
+      <li><strong>Nothing in the existing flow may break.</strong> Every change is feature-flagged behind env vars; default behaviour is unchanged.</li>
+      <li>Current production stack: <strong>Render (backend) + Netlify (frontend) + Supabase (DB)</strong>. The plan assumes this stack.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>1. Dependencies to add</h2>
+  <p>In <code>backend/package.json</code>:</p>
+  <pre><code>"@supabase/supabase-js": "^2.45.0",
+"resend": "^4.0.0"</code></pre>
+  <p>Then from the repo root:</p>
+  <pre><code>pnpm install --filter @arogya/backend</code></pre>
+</section>
+
+<section>
+  <h2>2. Environment variables to add</h2>
+  <p>Append to <code>backend/.env.example</code> and <code>backend/.env</code>:</p>
+  <pre><code># ─── Storage driver (extend the existing enum to accept 'supabase') ───
+STORAGE_DRIVER=supabase                  # was 'local'
+STORAGE_SIGNED_URL_TTL_SECONDS=3600
+
+# ─── Supabase (server-only — service-role bypasses RLS, NEVER expose) ──
+SUPABASE_URL=https://&lt;your-project&gt;.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=&lt;service-role-jwt&gt;
+SUPABASE_BUCKET_REPORTS=reports
+SUPABASE_BUCKET_PAYMENT_PROOFS=payment-proofs
+SUPABASE_BUCKET_DOCTOR_PHOTOS=doctor-photos
+SUPABASE_BUCKET_INVOICES=invoices
+
+# ─── Frontend origin (used to build deep-links in emails) ──────────────
+FRONTEND_PUBLIC_URL=https://&lt;your-netlify-site&gt;.netlify.app
+
+# ─── Resend (free tier = 3,000 emails / month) ─────────────────────────
+RESEND_API_KEY=re_xxx
+EMAIL_FROM=Arogya Diagnostics &lt;onboarding@resend.dev&gt;   # change after domain verification
+EMAIL_REPLY_TO=
+EMAIL_BRAND_NAME=Arogya Diagnostics</code></pre>
+  <p>Update <code>backend/src/config/env.ts</code> Zod schema accordingly: extend <code>STORAGE_DRIVER</code> enum to <code>['local','s3','supabase']</code>, add the <code>SUPABASE_*</code> + <code>FRONTEND_PUBLIC_URL</code> + email vars (all optional/with defaults).</p>
+</section>
+
+<section>
+  <h2>3. Supabase Storage — buckets to create</h2>
+  <p>In Supabase Studio → Storage:</p>
+  <table>
+    <thead><tr><th>Bucket name</th><th>Public?</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr><td><code>reports</code></td><td><strong>Private</strong></td><td>Patient lab reports (PDFs, images)</td></tr>
+      <tr><td><code>payment-proofs</code></td><td><strong>Private</strong></td><td>Patient UPI payment screenshots</td></tr>
+      <tr><td><code>doctor-photos</code></td><td>Public</td><td>Doctor profile photos on the public site</td></tr>
+      <tr><td><code>invoices</code></td><td><strong>Private</strong></td><td>Generated PDF invoices</td></tr>
+    </tbody>
+  </table>
+  <p>The backend uses the <strong>service-role</strong> key to read/write; the frontend never talks to Supabase Storage directly. Private buckets stay private — the backend serves bytes through its own <code>/api/v1/files/:key</code> route (same URL pattern as today, no frontend change).</p>
+</section>
+
+<section>
+  <h2>4. Code changes — order to apply</h2>
+
+  <h3>4.1 Extend the storage adapter <span class="tag">backend/src/lib/storage.ts</span></h3>
+  <p>Add a <code>download()</code> method to the <code>StorageAdapter</code> interface, then add a <code>SupabaseStorageAdapter</code> class implementing it. Key implementation notes:</p>
+  <ul>
+    <li>Use the tilde character (<code>~</code>) as the bucket/object separator inside <code>storage_key</code>, e.g. <code>reports~abc-123.pdf</code>. The tilde is URL-safe per RFC 3986 (no <code>encodeURIComponent</code> dance) and keeps the path parameter a single segment.</li>
+    <li>Map folder names to bucket env vars: <code>reports → SUPABASE_BUCKET_REPORTS</code>, <code>payment-proofs → SUPABASE_BUCKET_PAYMENT_PROOFS</code>, etc.</li>
+    <li>Build the public URL as <code>${BACKEND_PUBLIC_URL}/api/v1/files/${key}</code>. The backend proxies the download from the bucket, so private buckets stay private and the frontend URL contract is unchanged.</li>
+    <li>The factory function <code>buildStorage()</code> picks the adapter based on <code>STORAGE_DRIVER</code> and falls back to <code>LocalStorageAdapter</code> if Supabase keys are missing — so a partial configuration never crashes the backend.</li>
+    <li>Export an <code>isSupabaseStorageActive()</code> helper for routes to check.</li>
+  </ul>
+
+  <h3>4.2 Build the Resend wrapper <span class="tag">backend/src/lib/email.ts (new)</span></h3>
+  <p>A thin, typed wrapper around <code>resend.emails.send()</code>:</p>
+  <ul>
+    <li>Lazy-init the Resend client (only when <code>RESEND_API_KEY</code> is set — so the file imports cleanly in dev without a key).</li>
+    <li><code>sendEmail({ to, subject, html, text, idempotencyKey, replyTo })</code> → returns <code>{ ok, id?, error?, skipped? }</code>.</li>
+    <li>Skip silently if no key is set; log the OTP code to console in dev mode (mirrors today's mobile-OTP debug echo).</li>
+    <li>Redact recipients in logs as <code>p***@example.com</code>.</li>
+    <li>Pass <code>X-Entity-Ref-ID</code> header when an idempotency key is provided so duplicate sends are visible in Resend's dashboard.</li>
+  </ul>
+
+  <h3>4.3 Email templates <span class="tag">backend/src/lib/emailTemplates/ (new directory)</span></h3>
+  <p>Four templates + a shared layout:</p>
+  <table>
+    <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>layout.ts</code></td><td>Email-client-safe HTML scaffold (inline styles, 600px table, brand header). Plus an <code>escapeHtml()</code> helper.</td></tr>
+      <tr><td><code>otpEmail.ts</code></td><td>OTP code email — big monospace code in a card. Returns <code>{ subject, html, text }</code>.</td></tr>
+      <tr><td><code>bookingConfirmed.ts</code></td><td>Booking confirmed after payment proof uploaded.</td></tr>
+      <tr><td><code>reportReady.ts</code></td><td>Lab report uploaded — CTA links to <code>${FRONTEND_PUBLIC_URL}/patient/reports/${bookingCode}</code>.</td></tr>
+      <tr><td><code>paymentReverified.ts</code></td><td>Admin re-verified UPI payment in person.</td></tr>
+      <tr><td><code>index.ts</code></td><td>Barrel export.</td></tr>
+    </tbody>
+  </table>
+  <p>Templates render in Gmail, Outlook, Apple Mail, Yahoo, and dark-mode clients. Always emit HTML + plain-text together (multipart).</p>
+
+  <h3>4.4 Extend notify() <span class="tag">backend/src/lib/notify.ts</span></h3>
+  <p>Add an optional <code>email</code> field to <code>NotifyArgs</code>:</p>
+  <pre><code>email?: {
+  subject: string;
+  html: string;
+  text: string;
+  idempotencyKey?: string;
+  overrideTo?: string | string[];   // for admin-alert audience
+}</code></pre>
+  <p>After the DB insert, if <code>email</code> is present:</p>
+  <ol>
+    <li>Look up the recipient email by <code>user_id</code> from the <code>users.email</code> column (or use <code>overrideTo</code>).</li>
+    <li>Call <code>sendEmail()</code> — best-effort, failure logs but never throws (matches the existing <code>notify()</code> contract).</li>
+    <li>Email step happens <em>outside</em> the optional transaction — a failed Resend call never rolls back the underlying business action.</li>
+  </ol>
+
+  <h3>4.5 Wire emails at call sites <span class="tag">2 places, additive only</span></h3>
+  <ul>
+    <li><code>backend/src/modules/uploads/uploadRoutes.ts</code> — when the admin uploads a report (event <code>report_uploaded</code>), render <code>reportReady({ patientName, bookingCode })</code> and pass it to <code>notify()</code>. Need to LEFT JOIN <code>users</code> in the booking lookup to get the first name.</li>
+    <li><code>backend/src/modules/phase2/phase2Routes.ts</code> — when the admin re-verifies a UPI payment in person (event <code>reverified</code>), render <code>paymentReverified({ patientName, bookingCode, amount })</code> and pass it to <code>notify()</code>. The amount comes from <code>payments.amount</code> (NUMERIC, not paise).</li>
+  </ul>
+
+  <h3>4.6 Email-OTP endpoints <span class="tag">backend/src/modules/auth/authRoutes.ts</span></h3>
+  <p>Two new endpoints, parallel to the existing mobile-OTP flow — mobile-OTP keeps working, email-OTP is opt-in:</p>
+  <ul>
+    <li><code>POST /auth/otp/email/send</code> — accepts <code>{ email }</code>, issues a 6-digit code via <code>otpStore.issue('email:' + email.toLowerCase())</code>, renders <code>otpEmail()</code> template, sends via Resend. Protected by <code>otpIssueLimiter</code> (5 per 10 min per IP — add to <code>middleware/rateLimit.ts</code>).</li>
+    <li><code>POST /auth/otp/email/verify</code> — accepts <code>{ email, code, first_name?, last_name? }</code>, verifies via <code>otpStore.verify('email:' + email, code)</code>, auto-creates a patient account on first verify (with email-only, no mobile required — the users schema allows it).</li>
+  </ul>
+  <div class="callout">
+    <strong>OTP store namespacing.</strong> The store is keyed by identifier. Mobile flow uses the raw mobile number; email flow uses <code>email:&lt;lowercased-email&gt;</code>. The prefix prevents any chance of collision and makes the audit trail clear.
+  </div>
+
+  <h3>4.7 Refactor reports upload to write to Supabase <span class="tag">uploadRoutes.ts</span></h3>
+  <p>Dual-path: when <code>isSupabaseStorageActive()</code>, call <code>storage.upload('reports', ...)</code> and store the returned key in <code>reports.storage_key</code> with <code>file_bytes = NULL</code>. Otherwise, keep the existing BYTEA path. The download route (<code>GET /files/:storageKey</code>) checks <code>file_bytes</code> first:</p>
+  <pre><code>if (row.file_bytes) {
+  // legacy BYTEA row — serve inline
+  res.end(row.file_bytes);
+} else {
+  // Supabase row — fetch from bucket
+  const blob = await storage.download(row.storage_key);
+  if (!blob) throw 404;
+  res.end(blob.buffer);
+}</code></pre>
+  <p>This means <strong>no data migration is required</strong> — old rows keep working, new uploads go to Supabase. Migrate old rows later (or never).</p>
+  <p>Update the route's storage-key regex to allow <code>~</code>: <code>/^[a-zA-Z0-9._~\-]+$/</code>.</p>
+
+  <h3>4.8 Apply the same pattern to other upload routes <span class="tag">later</span></h3>
+  <p>Once reports is proven in production, repeat the dual-path swap for:</p>
+  <ul>
+    <li>Doctor / collector profile photos (currently <code>users.profile_photo_bytes</code> — migration 0022)</li>
+    <li>Payment proof uploads (currently <code>payments.payment_proof_bytes</code> — migration 0024)</li>
+  </ul>
+  <p>Same pattern: gate on <code>isSupabaseStorageActive()</code>, store the Supabase key, fall back to BYTEA for old rows.</p>
+</section>
+
+<section>
+  <h2>5. Security checklist before going live</h2>
+  <ul>
+    <li><strong>Service-role key</strong> only set in the Render backend env — never in the frontend, never committed.</li>
+    <li><strong>HTTPS everywhere</strong> — Render gives this for free.</li>
+    <li><strong>HSTS</strong> at the host layer.</li>
+    <li><strong>OTP rate-limit</strong> active: 5 issues per 10 min per IP.</li>
+    <li><strong>bcrypt rounds ≥ 12</strong> in production (currently 10 default).</li>
+    <li><strong>JWT secret ≥ 64 random chars</strong> — regenerate before go-live.</li>
+    <li><strong>No PII in logs</strong> — already enforced by the redact() helper in email.ts.</li>
+    <li><strong>Resend domain verified</strong> — DKIM, SPF, DMARC records in your registrar for <code>arogyaclinic.in</code>.</li>
+    <li><strong>Buckets <code>reports</code>, <code>payment-proofs</code>, <code>invoices</code> are Private</strong> in Supabase Studio.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>6. Activation order on the Render service</h2>
+  <ol>
+    <li>Create the 4 buckets in Supabase Studio (must exist before STORAGE_DRIVER=supabase).</li>
+    <li>Sign up at <a href="https://resend.com">resend.com</a>, grab the API key.</li>
+    <li>Set all the env vars listed in §2 on the Render service (Settings → Environment).</li>
+    <li>Deploy the code from §4. Backend restarts — Render handles this automatically.</li>
+    <li>Smoke test: upload one report via admin UI → check it landed in the <code>reports</code> bucket in Supabase Studio. Open the patient's email — they should receive the report-ready notification.</li>
+    <li>Optionally: write a one-off script to migrate historical BYTEA rows to Supabase Storage (read rows where <code>file_bytes IS NOT NULL</code>, upload via the adapter, set <code>storage_key</code>, NULL out <code>file_bytes</code>). Don't drop the BYTEA columns until backups confirm.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>7. Rollback plan</h2>
+  <p>If anything misbehaves after activation:</p>
+  <ol>
+    <li>On Render → Settings → Environment, set <code>STORAGE_DRIVER=local</code> (or unset it — default is <code>local</code>). Save → service restarts. New uploads go back to BYTEA, old Supabase uploads stay readable as long as the bucket still exists.</li>
+    <li>To disable email entirely, blank out <code>RESEND_API_KEY</code>. The <code>sendEmail()</code> wrapper skips silently when no key is set — no errors thrown.</li>
+    <li>Both gates above are independent — you can roll back one without affecting the other.</li>
+  </ol>
+</section>
+
+<footer>
+  Generated 17 May 2026 · Arogya Diagnostics · Recovery document, not for client distribution.
+</footer>
+
+</div>
+</body>
+</html>

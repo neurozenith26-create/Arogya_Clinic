@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Arogya Diagnostics &mdash; Branch Reference</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #0b1220;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent-2: #34d399;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --good: #4ade80;
+    --code-bg: #0b1220;
+    --code-fg: #e2e8f0;
+    --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    padding: 36px 32px;
+    color: white;
+  }
+  header h1 { margin: 0 0 6px 0; font-size: 28px; }
+  header .sub { opacity: 0.92; font-size: 14px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 24px 80px; }
+  h2 {
+    margin: 32px 0 12px;
+    color: var(--accent);
+    font-size: 20px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { margin: 20px 0 8px; color: var(--accent-2); font-size: 16px; }
+  p, li { font-size: 14px; }
+  ul, ol { padding-left: 22px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin: 12px 0;
+  }
+  .panel.warn { border-color: var(--warn); background: #2a1f00; }
+  .panel.bad  { border-color: var(--bad);  background: #2a0f0f; }
+  .panel.good { border-color: var(--good); background: #0a2a14; }
+  .panel.info { border-color: var(--accent); background: #062032; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .pill.deployed { background: #052e16; color: var(--good); border: 1px solid var(--good); }
+  .pill.staging  { background: #2e1605; color: var(--warn); border: 1px solid var(--warn); }
+  .pill.feature  { background: #062032; color: var(--accent); border: 1px solid var(--accent); }
+  .pill.backup   { background: #1a1a2e; color: var(--muted); border: 1px solid var(--muted); }
+  .pill.deleted  { background: #2e0505; color: var(--bad);  border: 1px solid var(--bad); }
+  .pill.local    { background: #1a1a2e; color: var(--accent-2); border: 1px solid var(--accent-2); }
+  code, pre {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    color: var(--code-fg);
+  }
+  code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; }
+  pre {
+    background: var(--code-bg);
+    padding: 12px 14px;
+    border-radius: 6px;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    margin: 8px 0;
+    white-space: pre;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 13px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  tr:hover td { background: rgba(56, 189, 248, 0.04); }
+  .sha {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--accent-2);
+  }
+  .branch-name {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .ascii {
+    background: var(--code-bg);
+    padding: 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    white-space: pre;
+    overflow-x: auto;
+    line-height: 1.4;
+  }
+  .footer { color: var(--muted); font-size: 12px; margin-top: 40px; text-align: center; }
+  details { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; margin: 8px 0; }
+  summary { cursor: pointer; font-weight: 600; color: var(--accent-2); }
+  details[open] summary { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Arogya Diagnostics &mdash; Branch Reference</h1>
+  <div class="sub">Which branch has which code &mdash; at a glance. Generated at the end of the Phase-2 prep work.</div>
+</header>
+
+<main>
+
+<section class="panel info">
+  <h3 style="margin-top:0">Quick mental model</h3>
+  <ul>
+    <li><strong><span class="branch-name">main</span></strong>, <strong><span class="branch-name">development</span></strong>, <strong><span class="branch-name">staging</span></strong> &mdash; all three carry <em>Phase 1 code + docs</em>. Identical content, same SHA <span class="sha">950e275</span>. This is what the client sees.</li>
+    <li><strong><span class="branch-name">multiple_branch_feature_added_phase2</span></strong> &mdash; Phase 1 code + the <em>Phase 2 (multi-branch) feature</em> stacked on top. The Phase 2 cutover branch. <span class="sha">a74697f</span>.</li>
+    <li><strong><span class="branch-name">development_backup</span></strong> &mdash; safety net pointing at the <em>pre-docs Phase-1 state</em>. <span class="sha">e795de4</span>. Local only.</li>
+    <li><strong><span class="branch-name">ui1</span></strong>, <strong><span class="branch-name">ui2</span></strong> &mdash; <span class="pill deleted">DELETED</span> &mdash; old UI experiments, removed from local + remote during cleanup.</li>
+  </ul>
+</section>
+
+<!-- ============== QUICK LOOKUP ============== -->
+<h2>1. Quick lookup table</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width:25%">Branch</th>
+      <th>Last commit</th>
+      <th>Role</th>
+      <th>Local</th>
+      <th>Remote</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>
+        <span class="branch-name">main</span><br />
+        <span class="pill deployed">Deployed</span>
+      </td>
+      <td>
+        <span class="sha">950e275</span><br />
+        <span style="color:var(--muted)">doc must required for [hase 2</span>
+      </td>
+      <td>Phase 1 code (single-clinic) + project docs (HTML / proposal / hosting files). What the live demo URL serves. Client sees this.</td>
+      <td><span class="pill local">yes</span></td>
+      <td><span class="pill local">yes</span></td>
+    </tr>
+    <tr>
+      <td>
+        <span class="branch-name">development</span><br />
+        <span class="pill staging">Work branch</span>
+      </td>
+      <td>
+        <span class="sha">950e275</span> (= main)<br />
+        <span style="color:var(--muted)">doc must required for [hase 2</span>
+      </td>
+      <td>Day-to-day work branch. Currently in sync with main (no in-flight work).</td>
+      <td><span class="pill local">yes</span></td>
+      <td><span class="pill local">yes</span></td>
+    </tr>
+    <tr>
+      <td>
+        <span class="branch-name">staging</span><br />
+        <span class="pill staging">Pre-prod</span>
+      </td>
+      <td>
+        <span class="sha">950e275</span> (= main)<br />
+        <span style="color:var(--muted)">doc must required for [hase 2</span>
+      </td>
+      <td>Pre-production mirror. Currently identical to main.</td>
+      <td><span class="pill local">yes</span></td>
+      <td><span class="pill local">yes</span></td>
+    </tr>
+    <tr>
+      <td>
+        <span class="branch-name">multiple_branch_feature_added_phase2</span><br />
+        <span class="pill feature">Phase 2 feature</span>
+      </td>
+      <td>
+        <span class="sha">a74697f</span><br />
+        <span style="color:var(--muted)">feat(phase2): multi-branch (multi-clinic) architecture</span>
+      </td>
+      <td>Phase 2 multi-branch implementation, ready to merge into main when the team decides to ship.</td>
+      <td><span class="pill local">yes</span></td>
+      <td><span class="pill local">yes</span></td>
+    </tr>
+    <tr>
+      <td>
+        <span class="branch-name">development_backup</span><br />
+        <span class="pill backup">Safety net</span>
+      </td>
+      <td>
+        <span class="sha">e795de4</span><br />
+        <span style="color:var(--muted)">pricing bug fixed</span>
+      </td>
+      <td>Snapshot of the Phase-1 state <em>before</em> the docs commit landed. Use if you need to roll the workspace back to that point without touching remote.</td>
+      <td><span class="pill local">yes</span></td>
+      <td>&mdash;</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============== ASCII DIAGRAM ============== -->
+<h2>2. Branch graph</h2>
+<div class="ascii">
+                                  (Phase 2 — multi-branch feature)
+                                  a74697f  feat(phase2): multi-branch architecture
+                                                ▲
+                                                │  (1 commit ahead of main)
+                                                │
+   (Phase 1 + docs) ─────────────►  950e275  doc must required for [hase 2  ◄── main
+                                                ▲                            ◄── development
+                                                │                            ◄── staging
+                                                │  (cherry-picked here from old dev)
+                                                │
+   (pure Phase 1) ───────────────►  e795de4  pricing bug fixed  ◄── development_backup
+                                                ▲
+                                                │
+                                  787c6b7  Fix UPI overcharge
+                                                ▲
+                                                │
+                                  ... earlier Phase-1 history
+</div>
+
+<p class="footer-note" style="color:var(--muted); font-size:12px; margin-top:4px;">
+  All five active branches share the same Phase-1 history below <code>e795de4</code>. The split happens at that commit.
+</p>
+
+<!-- ============== DETAIL ============== -->
+<h2>3. Per-branch detail</h2>
+
+<details open>
+  <summary><span class="branch-name">main</span> &nbsp; <span class="pill deployed">Deployed</span></summary>
+  <ul>
+    <li><strong>SHA:</strong> <span class="sha">950e275</span> &mdash; "doc must required for [hase 2"</li>
+    <li><strong>What's on it:</strong> Phase 1 single-clinic code <em>plus</em> the docs commit (5 inert files in <code>Docs/</code> + a root-level python helper).</li>
+    <li><strong>Where it deploys:</strong> The live demo URL the client uses.</li>
+    <li><strong>What the client experiences:</strong>
+      <ul>
+        <li>Patient flow, admin dashboard, walk-in bills, payments, reports, doctors, services &mdash; identical to before. No "Branch Admins" tab, no branch dropdown, no Step 0 picker.</li>
+        <li>The DB underneath has the Phase-2 schema (<code>branches</code> table, <code>branch_id</code> columns, <code>DEFAULT 1</code> on <code>bookings.branch_id</code>) but the Phase-1 code never reads those new columns. <code>DEFAULT 1</code> is the safety net that auto-fills <code>branch_id</code> on the bookings INSERTs Phase-1 code writes.</li>
+      </ul>
+    </li>
+    <li><strong>Local-vs-remote:</strong> in sync.</li>
+  </ul>
+</details>
+
+<details>
+  <summary><span class="branch-name">development</span> &nbsp; <span class="pill staging">Work branch</span></summary>
+  <ul>
+    <li><strong>SHA:</strong> <span class="sha">950e275</span> (= same as main).</li>
+    <li><strong>What's on it:</strong> identical to main. Reset here after we cherry-picked the docs commit forward.</li>
+    <li><strong>Use:</strong> day-to-day work branch. Start new feature work here, push to a feature branch, PR back to development, then merge development to main when ready.</li>
+    <li><strong>Local-vs-remote:</strong> in sync.</li>
+  </ul>
+</details>
+
+<details>
+  <summary><span class="branch-name">staging</span> &nbsp; <span class="pill staging">Pre-prod</span></summary>
+  <ul>
+    <li><strong>SHA:</strong> <span class="sha">950e275</span> (= same as main).</li>
+    <li><strong>What's on it:</strong> identical to main.</li>
+    <li><strong>Use:</strong> mirror of production. If you have a separate staging deploy hooked to this branch, it's serving exactly the same code that main is. Use it to sanity-test before promoting changes to main.</li>
+    <li><strong>Local-vs-remote:</strong> in sync.</li>
+  </ul>
+</details>
+
+<details>
+  <summary><span class="branch-name">multiple_branch_feature_added_phase2</span> &nbsp; <span class="pill feature">Phase 2 feature</span></summary>
+  <ul>
+    <li><strong>SHA:</strong> <span class="sha">a74697f</span> &mdash; "feat(phase2): multi-branch (multi-clinic) architecture".</li>
+    <li><strong>What's on it:</strong> all of Phase 1 + a single new commit adding the multi-branch feature.</li>
+    <li><strong>Diff vs main:</strong> 26 multi-branch files (9 new + 17 modified) added by the phase-2 commit. Note: the phase-2 branch is technically <em>missing</em> the 5 docs files that landed on main after this branch was created &mdash; that gets cleaned up automatically when you merge phase2 into main on cutover day (main keeps the docs, phase2 commit gets layered on top).</li>
+    <li><strong>Contains (9 new files):</strong>
+      <ul style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:12.5px;">
+        <li>supabase/migrations/0028_branches.sql</li>
+        <li>supabase/seed/06_master_admin.sql</li>
+        <li>backend/src/modules/phase2/branchAdminsRoutes.ts</li>
+        <li>frontend/src/stores/branchFilterStore.ts</li>
+        <li>frontend/src/hooks/useBranches.ts</li>
+        <li>frontend/src/components/admin/BranchFilterDropdown.tsx</li>
+        <li>frontend/src/components/admin/ReadOnlyAdminContext.tsx</li>
+        <li>frontend/src/components/admin/WriteAction.tsx</li>
+        <li>frontend/src/pages/admin/AdminBranchAdminsPage.tsx</li>
+      </ul>
+    </li>
+    <li><strong>Use:</strong> merge into main on Phase-2 ship day. Full handoff doc: <code>Docs/manage_branches_phase2_features.html</code> (only on main; reach it via main checkout).</li>
+    <li><strong>Local-vs-remote:</strong> in sync.</li>
+  </ul>
+</details>
+
+<details>
+  <summary><span class="branch-name">development_backup</span> &nbsp; <span class="pill backup">Safety net</span></summary>
+  <ul>
+    <li><strong>SHA:</strong> <span class="sha">e795de4</span> &mdash; "pricing bug fixed".</li>
+    <li><strong>What's on it:</strong> the pure Phase-1 codebase <em>without</em> the docs commit. This is what main looked like before the Phase-2 prep work started.</li>
+    <li><strong>Local only:</strong> not pushed to origin. Acts as a personal undo button.</li>
+    <li><strong>Use:</strong> if you ever need to inspect "what did the codebase look like before any of the Phase-2 prep?", check this branch out. To restore your workspace to that exact state without affecting remote: <code>git checkout development_backup</code> &mdash; you'll be in detached-or-local-only mode and can copy files out before reverting.</li>
+    <li><strong>Don't delete it</strong> until you're 100% confident Phase 2 is shipped and stable.</li>
+  </ul>
+</details>
+
+<!-- ============== DEPLOYMENT ============== -->
+<h2>4. What ships from where</h2>
+<table>
+  <thead><tr><th>Target</th><th>Source branch</th><th>What runs</th></tr></thead>
+  <tbody>
+    <tr><td>Live demo URL (client-facing)</td><td><span class="branch-name">main</span></td><td>Phase 1 single-clinic UI + backend.</td></tr>
+    <tr><td>Local dev (<code>pnpm dev</code>)</td><td>whatever is checked out</td><td>If on <span class="branch-name">development</span> or <span class="branch-name">staging</span>: Phase 1. If on <span class="branch-name">multiple_branch_feature_added_phase2</span>: Phase 2 (use this to test the feature locally before merging).</td></tr>
+    <tr><td>Supabase Postgres</td><td>shared across <em>all</em> branches</td><td>Schema is Phase-2 capable. Phase-1 code reads only Phase-1 columns; Phase-2 code reads both. <code>DEFAULT 1</code> on <code>bookings.branch_id</code> is the safety net.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============== DB STATE ============== -->
+<h2>5. DB state (one Supabase, shared across branches)</h2>
+<div class="panel info">
+  <ul>
+    <li><strong>branches</strong> table: 1 row &mdash; Main Branch (id=1).</li>
+    <li><strong>branch_id</strong> columns: present on <code>users</code>, <code>bookings</code>, <code>doctor_centers</code>, <code>serviceable_pincodes</code>.</li>
+    <li><strong>bookings.branch_id</strong>: <code>NOT NULL DEFAULT 1</code> &mdash; this is what lets Phase-1 INSERTs (which don't supply <code>branch_id</code>) keep working.</li>
+    <li><strong>admin@gmail.com</strong>: flipped to <code>role='admin'</code>, <code>admin_role='admin'</code>, <code>branch_id=1</code>. Still passes Phase-1's <code>requireRole('admin','super_admin')</code> guards.</li>
+    <li><strong>Latest applied migration</strong>: <code>0028_branches.sql</code> &mdash; the file is only on <span class="branch-name">multiple_branch_feature_added_phase2</span> but its effects are already in the live DB.</li>
+    <li><strong>Backfilled data</strong>: all 16 existing bookings, 1 doctor_center, 2 serviceable_pincodes tagged to Main Branch.</li>
+    <li><strong>Not yet seeded</strong>: <code>superadmin@gmail.com</code> &mdash; intentionally deferred to Phase-2 ship day.</li>
+  </ul>
+</div>
+
+<!-- ============== HOW WE GOT HERE ============== -->
+<h2>6. Recent operations log (for context)</h2>
+<ol>
+  <li>Built the multi-branch feature on <span class="branch-name">development</span> as uncommitted work. Stashed it.</li>
+  <li>Checked out <span class="branch-name">multiple_branch_feature_added_phase2</span> (which had been created blank, matching main).</li>
+  <li>Popped the stash there, applied the <code>DEFAULT 1</code> safety fix to <code>0028_branches.sql</code>, committed as <span class="sha">a74697f</span> &mdash; the single Phase-2 commit.</li>
+  <li>Ran <code>pnpm db:migrate</code> against Supabase &mdash; <code>0028_branches.sql</code> applied successfully. Live DB is now Phase-2 capable.</li>
+  <li>Returned to <span class="branch-name">development</span>.</li>
+  <li>You added the docs commit (HTML handoff + proposal docs) on <span class="branch-name">development</span> as <span class="sha">5dbce77</span>.</li>
+  <li>Cherry-picked that commit onto <span class="branch-name">main</span> (became <span class="sha">950e275</span>). Reset <span class="branch-name">development</span> and <span class="branch-name">staging</span> to match main.</li>
+  <li>Pushed all four active branches to origin (main / development / staging / phase2). Used <code>--force-with-lease</code> only on development (SHA rename, content-identical).</li>
+  <li>Deleted <span class="branch-name">ui1</span> (local-only) and <span class="branch-name">ui2</span> (local + remote) &mdash; both had 0 unique commits vs main.</li>
+</ol>
+
+<!-- ============== QUICK COMMANDS ============== -->
+<h2>7. Quick command reference</h2>
+
+<h3>7.1 See where I am</h3>
+<pre>git branch                    # local branches (* = current)
+git branch -r                 # remote branches
+git status                    # working tree state
+git log --oneline -5          # last 5 commits on current branch</pre>
+
+<h3>7.2 Switch branches safely</h3>
+<pre>git status                    # confirm working tree is clean first
+git checkout main             # go to Phase 1
+git checkout multiple_branch_feature_added_phase2  # go to Phase 2
+git checkout development_backup                    # peek at pre-docs Phase 1</pre>
+
+<h3>7.3 Test Phase 2 locally before shipping</h3>
+<pre>git checkout multiple_branch_feature_added_phase2
+pnpm install                  # if any new deps (none expected for Phase 2)
+pnpm dev                      # frontend on 5173, backend on 3001
+# Login as superadmin@gmail.com / 123 to test the feature
+# (only works AFTER you've run pnpm db:seed, which seeds that user)</pre>
+
+<h3>7.4 Ship Phase 2 (when ready)</h3>
+<pre>git checkout main
+git pull
+git merge multiple_branch_feature_added_phase2
+git push origin main
+pnpm db:seed                  # creates superadmin@gmail.com + Mumbai branch</pre>
+
+<h3>7.5 Compare branches</h3>
+<pre>git log --oneline main..multiple_branch_feature_added_phase2     # commits on phase2 not on main
+git diff --stat main..multiple_branch_feature_added_phase2       # file-level summary
+git diff main..multiple_branch_feature_added_phase2 -- &lt;path&gt;    # specific file diff</pre>
+
+<h3>7.6 Rollback options</h3>
+<pre># If something on main goes wrong after a Phase-2 merge:
+git checkout main
+git revert -m 1 &lt;merge-sha&gt;
+git push origin main
+
+# If you need to restore workspace to the pre-docs state locally:
+git checkout development_backup</pre>
+
+<!-- ============== REFS ============== -->
+<h2>8. Related documents</h2>
+<ul>
+  <li><strong>Phase-2 handoff (for the next Claude session)</strong>: <code>Docs/manage_branches_phase2_features.html</code> &mdash; complete details on what was built and how to ship it.</li>
+  <li><strong>Plan file</strong>: <code>C:\Users\pradh\.claude\plans\so-as-per-my-majestic-lantern.md</code> &mdash; architectural rationale.</li>
+  <li><strong>Phase 2 commit</strong>: <code>a74697f</code> on <span class="branch-name">multiple_branch_feature_added_phase2</span>.</li>
+  <li><strong>Docs commit</strong>: <code>950e275</code> on <span class="branch-name">main</span> / <span class="branch-name">development</span> / <span class="branch-name">staging</span>.</li>
+  <li><strong>Pre-docs baseline</strong>: <code>e795de4</code> on <span class="branch-name">development_backup</span>.</li>
+</ul>
+
+<div class="footer">Refresh this file (re-run the generation prompt) after any future branch operation so it stays accurate.</div>
+
+</main>
+</body>
+</html>
